@@ -6,6 +6,52 @@
 require_once 'config.php';
 require_once 'includes/auth.php';
 
+// --- AJAX AUTOCOMPLETE ENDPOINT ---
+if (isset($_GET['ajax_search'])) {
+    header('Content-Type: application/json');
+    $term = trim($_GET['term'] ?? '');
+    
+    if (strlen($term) >= 1) {
+        $words = explode(' ', $term);
+        $sql = "SELECT DISTINCT patient_name FROM daily_records WHERE patient_name IS NOT NULL AND patient_name != ''";
+        
+        $params = [];
+        $types = '';
+        $conditions = [];
+        
+        foreach ($words as $word) {
+            if ($word !== '') {
+                $conditions[] = "patient_name LIKE ?";
+                $params[] = '%' . $word . '%';
+                $types .= 's';
+            }
+        }
+        
+        if (!empty($conditions)) {
+            $sql .= " AND (" . implode(" AND ", $conditions) . ")";
+        }
+        
+        $sql .= " ORDER BY patient_name ASC LIMIT 12";
+        
+        $stmt = $conn->prepare($sql);
+        if (!empty($params)) {
+            $stmt->bind_param($types, ...$params);
+        }
+        $stmt->execute();
+        $res = $stmt->get_result();
+        
+        $results = [];
+        while ($row = $res->fetch_assoc()) {
+            $results[] = $row['patient_name'];
+        }
+        $stmt->close();
+        echo json_encode($results);
+    } else {
+        echo json_encode([]);
+    }
+    exit;
+}
+
 // Helper function to handle JSON, arrays, or text for checkbox items safely
 function format_checkbox_items($data) {
     if (empty($data)) return [];
@@ -45,7 +91,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'csv' && !empty($_GET['patient
         FROM daily_records dr 
         LEFT JOIN physicians p ON dr.physician_id = p.physician_id 
         LEFT JOIN meds_types mt ON dr.meds_type_id = mt.meds_type_id 
-        WHERE dr.patient_name LIKE ? 
+        WHERE LOWER(TRIM(dr.patient_name)) LIKE LOWER(TRIM(?)) 
         ORDER BY dr.record_date DESC
     ");
     $search = '%' . $patient_name . '%';
@@ -114,7 +160,7 @@ body {
     gap: 0.5rem;
 }
 
-/* Filter Card */
+/* Filter Card & Autocomplete */
 .control-card {
     background: var(--bg-card);
     border: 1px solid var(--border-subtle);
@@ -137,6 +183,11 @@ body {
     color: var(--text-muted);
 }
 
+.autocomplete-wrapper {
+    position: relative;
+    display: inline-block;
+}
+
 .modern-input {
     padding: 0.5rem 0.875rem;
     border: 1px solid var(--border-subtle);
@@ -152,6 +203,52 @@ body {
 .modern-input:focus {
     border-color: var(--primary);
     box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+/* Autocomplete Dropdown Menu */
+.autocomplete-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    background: #ffffff;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+    z-index: 1000;
+    max-height: 250px;
+    overflow-y: auto;
+    display: none;
+}
+
+.autocomplete-item {
+    padding: 0.625rem 0.875rem;
+    font-size: 0.875rem;
+    color: var(--text-main);
+    cursor: pointer;
+    border-bottom: 1px solid #f1f5f9;
+    transition: background-color 0.1s ease;
+}
+
+.autocomplete-item:last-child {
+    border-bottom: none;
+}
+
+.autocomplete-item:hover, .autocomplete-item.selected {
+    background-color: var(--primary-light);
+    color: var(--primary);
+}
+
+.autocomplete-item strong {
+    font-weight: 700;
+    color: var(--primary);
+}
+
+.autocomplete-message {
+    padding: 0.75rem 0.875rem;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    text-align: center;
 }
 
 /* KPI Summary Grid */
@@ -366,24 +463,19 @@ body {
         <?php endif; ?>
     </header>
 
-    <!-- Search Card -->
+    <!-- Search Card with AJAX Autocomplete -->
     <section class="control-card">
-        <form class="filter-form" method="get" action="patient_history.php">
+        <form class="filter-form" method="get" action="patient_history.php" id="searchForm" autocomplete="off">
             <label for="patient">Patient Name:</label>
-            <input type="text" name="patient" id="patient" class="modern-input" value="<?= h($patient_name) ?>" placeholder="Type patient name to search..." required list="patient-list-history" autocomplete="off">
+            <div class="autocomplete-wrapper">
+                <input type="text" name="patient" id="patient" class="modern-input" value="<?= h($patient_name) ?>" placeholder="Type patient name..." required>
+                <div id="autocompleteDropdown" class="autocomplete-dropdown"></div>
+            </div>
             <button type="submit" class="btn btn-primary btn-sm">🔍 Search</button>
             <?php if ($patient_name): ?>
                 <a href="patient_history.php" class="btn btn-sm btn-outline">Clear</a>
             <?php endif; ?>
         </form>
-        <datalist id="patient-list-history">
-            <?php 
-                $all_patients = $conn->query("SELECT DISTINCT patient_name FROM daily_records ORDER BY patient_name"); 
-                while ($ap = $all_patients->fetch_assoc()): 
-            ?>
-                <option value="<?= h($ap['patient_name']) ?>">
-            <?php endwhile; ?>
-        </datalist>
     </section>
 
     <?php if ($patient_name): 
@@ -396,7 +488,7 @@ body {
             FROM daily_records dr 
             LEFT JOIN physicians p ON dr.physician_id = p.physician_id 
             LEFT JOIN meds_types mt ON dr.meds_type_id = mt.meds_type_id 
-            WHERE dr.patient_name LIKE ? 
+            WHERE LOWER(TRIM(dr.patient_name)) LIKE LOWER(TRIM(?)) 
             ORDER BY dr.record_date DESC, dr.created_at DESC
         ");
         $search = '%' . $patient_name . '%';
@@ -404,7 +496,7 @@ body {
         $stmt->execute();
         $records = $stmt->get_result();
 
-        $total_visits     = $records->num_rows;
+        $total_visits    = $records->num_rows;
         $has_meds_count   = 0;
         $has_labs_count   = 0;
         $has_gamot_count  = 0;
@@ -603,5 +695,113 @@ body {
         </section>
     <?php endif; ?>
 </div>
+
+<!-- AJAX Autocomplete & Keyboard Navigation Script -->
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const input = document.getElementById('patient');
+    const dropdown = document.getElementById('autocompleteDropdown');
+    const form = document.getElementById('searchForm');
+    
+    let debounceTimer = null;
+    let currentFocus = -1;
+
+    function closeDropdown() {
+        dropdown.style.display = 'none';
+        dropdown.innerHTML = '';
+        currentFocus = -1;
+    }
+
+    function addActive(items) {
+        if (!items) return;
+        removeActive(items);
+        if (currentFocus >= items.length) currentFocus = 0;
+        if (currentFocus < 0) currentFocus = items.length - 1;
+        items[currentFocus].classList.add('selected');
+        items[currentFocus].scrollIntoView({ block: 'nearest' });
+    }
+
+    function removeActive(items) {
+        for (let item of items) {
+            item.classList.remove('selected');
+        }
+    }
+
+    input.addEventListener('input', function() {
+        const query = this.value.trim();
+        clearTimeout(debounceTimer);
+
+        if (query.length < 1) {
+            closeDropdown();
+            return;
+        }
+
+        debounceTimer = setTimeout(() => {
+            fetch(`patient_history.php?ajax_search=1&term=${encodeURIComponent(query)}`)
+                .then(response => response.json())
+                .then(data => {
+                    dropdown.innerHTML = '';
+                    currentFocus = -1;
+
+                    if (data.length === 0) {
+                        dropdown.innerHTML = '<div class="autocomplete-message">No patients found.</div>';
+                        dropdown.style.display = 'block';
+                        return;
+                    }
+
+                    data.forEach(name => {
+                        const div = document.createElement('div');
+                        div.className = 'autocomplete-item';
+                        
+                        // Highlight matching text portion
+                        const regex = new RegExp(`(${query.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')})`, 'gi');
+                        div.innerHTML = name.replace(regex, '<strong>$1</strong>');
+
+                        div.addEventListener('click', function() {
+                            input.value = name;
+                            closeDropdown();
+                            form.submit();
+                        });
+
+                        dropdown.appendChild(div);
+                    });
+
+                    dropdown.style.display = 'block';
+                })
+                .catch(err => {
+                    console.error('Autocomplete error:', err);
+                    closeDropdown();
+                });
+        }, 280); // 280ms debounce
+    });
+
+    input.addEventListener('keydown', function(e) {
+        const items = dropdown.getElementsByClassName('autocomplete-item');
+        
+        if (e.key === 'ArrowDown') {
+            currentFocus++;
+            addActive(items);
+            e.preventDefault();
+        } else if (e.key === 'ArrowUp') {
+            currentFocus--;
+            addActive(items);
+            e.preventDefault();
+        } else if (e.key === 'Enter') {
+            if (currentFocus > -1 && items[currentFocus]) {
+                e.preventDefault();
+                items[currentFocus].click();
+            }
+        } else if (e.key === 'Escape') {
+            closeDropdown();
+        }
+    });
+
+    document.addEventListener('click', function(e) {
+        if (!input.contains(e.target) && !dropdown.contains(e.target)) {
+            closeDropdown();
+        }
+    });
+});
+</script>
 
 <?php include 'includes/footer.php'; ?>
