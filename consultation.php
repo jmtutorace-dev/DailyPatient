@@ -478,7 +478,7 @@ include 'includes/header.php';
                                 <span class="badge-tag <?= $mb['is_consultation'] ? 'badge-success' : 'badge-danger' ?>">
                                     <?= $mb['is_consultation'] ? 'Consult' : 'Non-Consult' ?>
                                 </span>
-                            </td>
+                            </td> 
                             <td style="text-align: center; font-weight: 600;"><?= (int)$mb['cnt'] ?></td>
                             <td style="text-align: right;">
                                 <div><?= $pct ?>%</div>
