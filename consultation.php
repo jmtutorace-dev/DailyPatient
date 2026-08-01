@@ -488,7 +488,7 @@ include 'includes/header.php';
                             </td>
                         </tr>
                         <?php endforeach; ?>
-                    </tbody>
+                    </tbody> 
                 </table>
             </section>
         </div>
