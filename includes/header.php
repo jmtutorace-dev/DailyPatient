@@ -21,10 +21,12 @@ $show_physicians = ($auth_role === 'admin');
 $page_titles = [
     'dashboard.php' => 'Dashboard',
     'index.php'     => 'Daily Log',
+'patient-consultation.php' => 'Patient Consultations',
+    'consultation-records.php' => 'Consultation Records',
     'consultation.php' => 'Consultation Summary',
     'transmit.php'  => 'Transmit Tracker',
     'physicians.php' => 'Physicians & Rates',
-    'patient_history.php' => 'Patient History',
+'patient_history.php' => 'Patient History',
 ];
 $page_title_text = $page_titles[$current_page] ?? 'YAKAP GAMOT';
 ?><!DOCTYPE html>
@@ -58,9 +60,17 @@ $page_title_text = $page_titles[$current_page] ?? 'YAKAP GAMOT';
             <span class="nav-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="4" rx="1"/><rect x="13" y="9" width="8" height="12" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/></svg></span>
             Dashboard
         </a>
-        <a href="index.php" class="<?= nav_active('index.php') ?>">
+<a href="index.php" class="<?= nav_active('index.php') ?>">
             <span class="nav-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="12" y2="17"/><line x1="3" y1="7" x2="21" y2="7"/></svg></span>
             Daily Log
+        </a>
+<a href="patient-consultation.php" class="<?= nav_active('patient-consultation.php') ?>">
+            <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="14" y2="13"/></svg></span>
+            Patient Consultations
+        </a>
+        <a href="consultation-records.php" class="<?= nav_active('consultation-records.php') ?>">
+            <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M15.5 12.5a4 4 0 0 1-4 4"/><path d="M6.5 12.5a4 4 0 0 0 4 4"/><path d="M10 2v3"/><path d="M10 5h1.5a2 2 0 0 1 0 4H10"/><path d="M10 9h-1.5a2 2 0 0 0 0 4H10"/></svg></span>
+            Consultation Records
         </a>
         <a href="consultation.php" class="<?= nav_active('consultation.php') ?>">
             <span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="14" y2="13"/></svg></span>
@@ -76,7 +86,7 @@ $page_title_text = $page_titles[$current_page] ?? 'YAKAP GAMOT';
             Physicians &amp; Rates
         </a>
         <?php endif; ?>
-        <a href="patient_history.php" class="<?= nav_active('patient_history.php') ?>">
+<a href="patient_history_full.php" class="<?= nav_active('patient_history_full.php') ?>">
             <span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33-1.82 8 8 0 0 0-14.46 0A1.65 1.65 0 0 0 5.6 15"/><path d="M2 21a8 8 0 0 1 20 0"/></svg></span>
             Patient History
         </a>

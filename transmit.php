@@ -62,7 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 transmitted_by = VALUES(transmitted_by), 
                 transmitted_at = VALUES(transmitted_at)
         ");
-        $stmt->bind_param("iiiss", $transmit_year, $transmit_month, $pcsf, $sap, $transmitted_by, $transmitted_at);
+        $stmt->bind_param("iiiiss", $transmit_year, $transmit_month, $pcsf, $sap, $transmitted_by, $transmitted_at);
         
         if ($stmt->execute()) {
             redirect_with_msg('transmit.php?year=' . $transmit_year, 'Transmit record updated successfully.');
@@ -111,7 +111,7 @@ $logs_stmt->bind_param("i", $selected_year);
 $logs_stmt->execute();
 $logs_result = $logs_stmt->get_result();
 
-$logs_by_month    = []; 
+$logs_by_month     = []; 
 $total_pcsf       = 0; 
 $total_sap        = 0; 
 $total_transmitted = 0;
@@ -393,12 +393,13 @@ include 'includes/header.php';
                     </tr>
                 </thead>
                 <tbody>
-                    <?php for ($m = 1; $m <= 12; $m++):
+<?php for ($m = 1; $m <= 12; $m++):
                         $log_data           = $logs_by_month[$m] ?? null;
                         $pcsf_checked       = ($log_data && (int)$log_data['pcsf'] === 1);
                         $sap_checked        = ($log_data && (int)$log_data['sap'] === 1);
                         $transmitted_by_val = $log_data['transmitted_by'] ?? '';
                         $transmitted_at_val = $log_data['transmitted_at'] ?? '';
+                        $row_form_id        = 'transmit-form-' . $m;
 
                         // Determine row status
                         if ($pcsf_checked && $sap_checked) {
@@ -413,44 +414,38 @@ include 'includes/header.php';
                         }
                     ?>
                         <tr>
-                            <form method="post" action="transmit.php">
-                                <input type="hidden" name="action" value="save_transmit">
-                                <input type="hidden" name="transmit_year" value="<?= $selected_year ?>">
-                                <input type="hidden" name="transmit_month" value="<?= $m ?>">
+                            <td><strong><?= $month_names[$m] ?></strong></td>
 
-                                <td><strong><?= $month_names[$m] ?></strong></td>
-                                
-                                <td style="text-align: center;">
-                                    <input type="checkbox" name="pcsf" value="1" class="checkbox-custom" <?= $pcsf_checked ? 'checked' : '' ?>>
-                                </td>
-                                
-                                <td style="text-align: center;">
-                                    <input type="checkbox" name="sap" value="1" class="checkbox-custom" <?= $sap_checked ? 'checked' : '' ?>>
-                                </td>
+                            <td style="text-align: center;">
+                                <input type="checkbox" name="pcsf" value="1" class="checkbox-custom" form="<?= $row_form_id ?>" <?= $pcsf_checked ? 'checked' : '' ?>>
+                            </td>
 
-                                <td style="text-align: center;">
-                                    <span class="status-pill <?= $status_class ?>"><?= $status_label ?></span>
-                                </td>
+                            <td style="text-align: center;">
+                                <input type="checkbox" name="sap" value="1" class="checkbox-custom" form="<?= $row_form_id ?>" <?= $sap_checked ? 'checked' : '' ?>>
+                            </td>
 
-                                <td>
-                                    <select name="transmitted_by" class="modern-select">
-                                        <option value="">-- Select Staff --</option>
-                                        <?php foreach ($staff_members as $s): ?>
-                                            <option value="<?= h($s['staff_name']) ?>" <?= ($transmitted_by_val === $s['staff_name']) ? 'selected' : '' ?>>
-                                                <?= h($s['staff_name']) ?>
-                                            </option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </td>
+                            <td style="text-align: center;">
+                                <span class="status-pill <?= $status_class ?>"><?= $status_label ?></span>
+                            </td>
 
-                                <td style="color: var(--text-secondary); font-size: 0.8rem;">
-                                    <?= $transmitted_at_val ? h(date('M j, Y g:i A', strtotime($transmitted_at_val))) : '—' ?>
-                                </td>
+                            <td>
+                                <select name="transmitted_by" class="modern-select" form="<?= $row_form_id ?>">
+                                    <option value="">-- Select Staff --</option>
+                                    <?php foreach ($staff_members as $s): ?>
+                                        <option value="<?= h($s['staff_name']) ?>" <?= ($transmitted_by_val === $s['staff_name']) ? 'selected' : '' ?>>
+                                            <?= h($s['staff_name']) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </td>
 
-                                <td style="text-align: right;">
-                                    <button type="submit" class="btn btn-primary btn-sm btn-save">Save</button>
-                                </td>
-                            </form>
+                            <td style="color: var(--text-secondary); font-size: 0.8rem;">
+                                <?= $transmitted_at_val ? h(date('M j, Y g:i A', strtotime($transmitted_at_val))) : '—' ?>
+                            </td>
+
+                            <td style="text-align: right;">
+                                <button type="submit" class="btn btn-primary btn-sm btn-save" form="<?= $row_form_id ?>">Save</button>
+                            </td>
                         </tr>
                     <?php endfor; ?>
                 </tbody>
@@ -465,7 +460,18 @@ include 'includes/header.php';
                 </tfoot>
             </table>
         </div>
-    </section>
+</section>
 </div>
+
+<?php
+// Hidden per-row forms (OUTSIDE the table — required so browsers don't drop them).
+// Each month's inputs reference these via the form="..." attribute.
+for ($m = 1; $m <= 12; $m++): ?>
+    <form id="transmit-form-<?= $m ?>" method="post" action="transmit.php" style="display:none;">
+        <input type="hidden" name="action" value="save_transmit">
+        <input type="hidden" name="transmit_year" value="<?= $selected_year ?>">
+        <input type="hidden" name="transmit_month" value="<?= $m ?>">
+    </form>
+<?php endfor; ?>
 
 <?php include 'includes/footer.php'; ?>

@@ -315,46 +315,38 @@ include 'includes/header.php';
                             <th style="width: 20%; text-align: right;">Action</th>
                         </tr>
                     </thead>
-                    <tbody>
+<tbody>
                         <?php foreach ($physicians_list as $p): ?>
                             <tr>
-                                <form method="post" action="physicians.php">
-                                    <input type="hidden" name="action" value="update_physician">
-                                    <input type="hidden" name="physician_id" value="<?= (int)$p['physician_id'] ?>">
-                                    
-                                    <td>
-                                        <input type="text" name="physician_name" class="modern-input" value="<?= h($p['physician_name']) ?>" required>
-                                    </td>
-                                    <td>
-                                        <input type="number" step="0.01" min="0" name="consultation_rate" class="modern-input" value="<?= h($p['consultation_rate']) ?>" style="max-width: 150px;">
-                                    </td>
-                                    <td style="text-align: center;">
-                                        <input type="checkbox" name="is_active" value="1" class="checkbox-custom" <?= $p['is_active'] ? 'checked' : '' ?>>
-                                    </td>
-                                    <td style="text-align: right;">
-                                        <button type="submit" class="btn btn-primary btn-sm btn-save">Save Changes</button>
-                                    </td>
-                                </form>
+                                <td>
+                                    <input type="text" name="physician_name" class="modern-input" value="<?= h($p['physician_name']) ?>" form="update-physician-<?= (int)$p['physician_id'] ?>" required>
+                                </td>
+                                <td>
+                                    <input type="number" step="0.01" min="0" name="consultation_rate" class="modern-input" value="<?= h($p['consultation_rate']) ?>" form="update-physician-<?= (int)$p['physician_id'] ?>" style="max-width: 150px;">
+                                </td>
+                                <td style="text-align: center;">
+                                    <input type="checkbox" name="is_active" value="1" class="checkbox-custom" form="update-physician-<?= (int)$p['physician_id'] ?>" <?= $p['is_active'] ? 'checked' : '' ?>>
+                                </td>
+                                <td style="text-align: right;">
+                                    <button type="submit" class="btn btn-primary btn-sm btn-save" form="update-physician-<?= (int)$p['physician_id'] ?>">Save Changes</button>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
 
                         <!-- Add New Physician Row -->
                         <tr class="add-new-row">
-                            <form method="post" action="physicians.php">
-                                <input type="hidden" name="action" value="add_physician">
-                                <td>
-                                    <input type="text" name="physician_name" class="modern-input" placeholder="+ Add new physician name" required>
-                                </td>
-                                <td>
-                                    <input type="number" step="0.01" min="0" name="consultation_rate" class="modern-input" value="0.00" style="max-width: 150px;">
-                                </td>
-                                <td style="text-align: center;">
-                                    <input type="checkbox" name="is_active" value="1" class="checkbox-custom" checked>
-                                </td>
-                                <td style="text-align: right;">
-                                    <button type="submit" class="btn btn-accent btn-sm">➕ Add Physician</button>
-                                </td>
-                            </form>
+                            <td>
+                                <input type="text" name="physician_name" class="modern-input" placeholder="+ Add new physician name" form="add-physician" required>
+                            </td>
+                            <td>
+                                <input type="number" step="0.01" min="0" name="consultation_rate" class="modern-input" value="0.00" form="add-physician" style="max-width: 150px;">
+                            </td>
+                            <td style="text-align: center;">
+                                <input type="checkbox" name="is_active" value="1" class="checkbox-custom" form="add-physician" checked>
+                            </td>
+                            <td style="text-align: right;">
+                                <button type="submit" class="btn btn-accent btn-sm" form="add-physician">➕ Add Physician</button>
+                            </td>
                         </tr>
                     </tbody>
                 </table>
@@ -387,23 +379,20 @@ include 'includes/header.php';
                         </tr>
                     <?php endforeach; ?>
 
-                    <!-- Add New Meds Type Row -->
+<!-- Add New Meds Type Row -->
                     <tr class="add-new-row">
-                        <form method="post" action="physicians.php">
-                            <input type="hidden" name="action" value="add_meds_type">
-                            <td>
-                                <input type="text" name="meds_type_name" class="modern-input" placeholder="+ Add new meds type" required>
-                            </td>
-                            <td>
-                                <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; font-size: 0.85rem;">
-                                    <input type="checkbox" name="is_consultation" value="1" class="checkbox-custom" checked> 
-                                    Counts as consultation
-                                </label>
-                            </td>
-                            <td style="text-align: right;">
-                                <button type="submit" class="btn btn-accent btn-sm">➕ Add Meds Type</button>
-                            </td>
-                        </form>
+                        <td>
+                            <input type="text" name="meds_type_name" class="modern-input" placeholder="+ Add new meds type" form="add-meds-type" required>
+                        </td>
+                        <td>
+                            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; font-size: 0.85rem;">
+                                <input type="checkbox" name="is_consultation" value="1" class="checkbox-custom" form="add-meds-type" checked> 
+                                Counts as consultation
+                            </label>
+                        </td>
+                        <td style="text-align: right;">
+                            <button type="submit" class="btn btn-accent btn-sm" form="add-meds-type">➕ Add Meds Type</button>
+                        </td>
                     </tr>
                 </tbody>
             </table>
@@ -435,28 +424,45 @@ include 'includes/header.php';
                         </tr>
                     <?php endforeach; ?>
 
-                    <!-- Add New Staff Row -->
+<!-- Add New Staff Row -->
                     <tr class="add-new-row">
-                        <form method="post" action="physicians.php">
-                            <input type="hidden" name="action" value="add_staff">
-                            <td>
-                                <input type="text" name="staff_name" class="modern-input" placeholder="+ Add new staff name" required>
-                            </td>
-                            <td>
-                                <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; font-size: 0.85rem;">
-                                    <input type="checkbox" name="is_active" value="1" class="checkbox-custom" checked> 
-                                    Active Member
-                                </label>
-                            </td>
-                            <td style="text-align: right;">
-                                <button type="submit" class="btn btn-accent btn-sm">➕ Add Staff</button>
-                            </td>
-                        </form>
+                        <td>
+                            <input type="text" name="staff_name" class="modern-input" placeholder="+ Add new staff name" form="add-staff" required>
+                        </td>
+                        <td>
+                            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; font-size: 0.85rem;">
+                                <input type="checkbox" name="is_active" value="1" class="checkbox-custom" form="add-staff" checked> 
+                                Active Member
+                            </label>
+                        </td>
+                        <td style="text-align: right;">
+                            <button type="submit" class="btn btn-accent btn-sm" form="add-staff">➕ Add Staff</button>
+                        </td>
                     </tr>
                 </tbody>
             </table>
         </div>
     </section>
 </div>
+
+<?php
+// Hidden per-row forms (OUTSIDE the tables — required so browsers don't drop them).
+// Table inputs reference these via the form="..." attribute.
+?>
+<form id="add-physician" method="post" action="physicians.php" style="display:none;">
+    <input type="hidden" name="action" value="add_physician">
+</form>
+<form id="add-meds-type" method="post" action="physicians.php" style="display:none;">
+    <input type="hidden" name="action" value="add_meds_type">
+</form>
+<form id="add-staff" method="post" action="physicians.php" style="display:none;">
+    <input type="hidden" name="action" value="add_staff">
+</form>
+<?php foreach ($physicians_list as $p): ?>
+    <form id="update-physician-<?= (int)$p['physician_id'] ?>" method="post" action="physicians.php" style="display:none;">
+        <input type="hidden" name="action" value="update_physician">
+        <input type="hidden" name="physician_id" value="<?= (int)$p['physician_id'] ?>">
+    </form>
+<?php endforeach; ?>
 
 <?php include 'includes/footer.php'; ?>

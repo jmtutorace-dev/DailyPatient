@@ -31,6 +31,67 @@ function h($str) {
 }
 
 /**
+ * Normalize a patient name before it is stored:
+ * trims leading/trailing whitespace and collapses any run of internal
+ * whitespace to a single space. This prevents new whitespace-inconsistency
+ * duplicates (e.g. "Jaypee C. Madelo" vs "Jaypee C.  Madelo") from being
+ * created from now on. Exact normalization/case is intentionally left alone —
+ * we do NOT enforce uniqueness (two real people can share a name); this only
+ * reduces accidental fragmentation from typos/spacing.
+ */
+function normalize_patient_name($name) {
+    if ($name === null) return '';
+    return trim(preg_replace('/\s+/', ' ', (string)$name));
+}
+
+/**
+ * Is this patient already registered anywhere in the system?
+ *
+ * CORE BUSINESS RULE: a patient is registered (FPE) exactly ONCE, ever. After
+ * that, every future visit must be logged as a Consultation — never another FPE.
+ *
+ * This is the SINGLE shared source of truth for that rule. It returns:
+ *   - FALSE            if the patient is brand new (no existing rows anywhere)
+ *   - ['record_id'=>..,'record_date'=>..]  if they have at least one
+ *     daily_records row (the earliest one, so callers can show the first date)
+ *   - [] (empty array)  if they exist only in the patients master list
+ *
+ * Every place that needs to know "is this patient new or existing" calls THIS
+ * exact function — no separate copies of similar logic anywhere else.
+ */
+function patient_is_registered($conn, $name, $exclude_record_id = null) {
+    $norm = normalize_patient_name($name);
+    if ($norm === '') return false;
+
+    $sql = "SELECT record_id, record_date FROM daily_records WHERE TRIM(patient_name) = ?";
+    $types = 's';
+    $params = [$norm];
+
+    // On the update path we must exclude the row being edited, so a patient
+    // keeping their own existing FPE row isn't treated as a duplicate.
+    if ($exclude_record_id !== null) {
+        $sql .= " AND record_id != ?";
+        $types .= 'i';
+        $params[] = (int)$exclude_record_id;
+    }
+    $sql .= " ORDER BY record_date ASC LIMIT 1";
+
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if ($row) return $row;
+
+    $stmt2 = $conn->prepare("SELECT patient_id FROM patients WHERE TRIM(patient_name) = ? LIMIT 1");
+    $stmt2->bind_param("s", $norm);
+    $stmt2->execute();
+    $exists = $stmt2->get_result()->fetch_assoc();
+    $stmt2->close();
+    return $exists ? [] : false;
+}
+
+/**
  * Read ?date= from query string, default to today
  * Returns a date string in 'Y-m-d' format
  */

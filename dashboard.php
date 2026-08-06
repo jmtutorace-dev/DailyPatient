@@ -134,7 +134,7 @@ include 'includes/header.php';
                     <div class="tl-date"><?= h(date('M j, Y g:i A', strtotime($r['created_at']))) ?></div>
                     <div class="tl-title"><?= h($r['patient_name']) ?></div>
                     <div class="tl-sub">
-                        <?= h($r['physician_name'] ?? '&mdash;') ?>
+<?= h($r['physician_name'] ?? '—') ?>
                         <?php if ($r['meds_type_name']): ?> &middot; <span class="meds-type-label"><?= h($r['meds_type_name']) ?></span><?php endif; ?>
                     </div>
                 </div>

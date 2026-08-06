@@ -1115,6 +1115,489 @@ table td .num, table td.mono {
     }
 }
 
+/* ---------- CARD HEAD (icon + title row) ---------- */
+.card-head {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid var(--border);
+}
+
+.card-head h3 {
+    font-family: var(--font-heading);
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--brand-primary);
+    margin: 0;
+}
+
+.card-head-icon {
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    background: rgba(45,106,79,0.12);
+    color: var(--success);
+}
+
+.card-head-icon.accent {
+    background: rgba(212,160,23,0.14);
+    color: var(--warning);
+}
+
+.card-head-icon.danger {
+    background: rgba(193,41,46,0.12);
+    color: var(--danger);
+}
+
+/* ---------- TOOLBAR CARD (filter strip) ---------- */
+.toolbar-card {
+    background: var(--bg-app);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+}
+
+/* ---------- PAGINATION ROW ---------- */
+.pagination-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 1rem;
+    flex-wrap: wrap;
+}
+
+.pagination-row .page-count {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+
+/* ---------- SELECTION BOXES (shared with index.php / patient-consultation.php) ---------- */
+/* Compact, clickable full-box selection items */
+.select-card-box {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.45rem;
+    background: #f8fafc;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.15s ease-in-out;
+}
+
+.select-card-box:hover {
+    background: #f1f5f9;
+    border-color: #94a3b8;
+}
+
+.select-card-box input[type="checkbox"] {
+    cursor: pointer;
+    pointer-events: none; /* Passes click directly to parent box */
+    transform: scale(0.9);
+}
+
+.select-card-box.active {
+    background: #eff6ff;
+    border-color: #3b82f6;
+    color: #1d4ed8;
+    font-weight: 600;
+}
+
+/* Collapsible selection panel (hidden by default; shown via JS) */
+.toggle-selection-container {
+    margin-top: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    display: none;
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.toggle-selection-container[hidden] {
+    display: none;
+}
+
+.group-title {
+    font-weight: 700;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    color: #2563eb;
+    margin: 0.35rem 0 0.15rem 0;
+    border-bottom: 1px solid #e2e8f0;
+    padding-bottom: 0.1rem;
+}
+
+.group-title.lab-title { color: #059669; }
+.group-title.gamot-title { color: #7c3aed; }
+.group-title:first-child { margin-top: 0; }
+
+.items-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 0.25rem;
+}
+
+/* ---------- EMPTY STATE BLOCK ---------- */
+.empty-state-block {
+    text-align: center;
+    padding: 2.5rem 1.5rem;
+    color: var(--text-muted);
+}
+
+.empty-state-block .empty-icon,
+.empty-state-block .empty-state-icon {
+    font-size: 2.5rem;
+    margin-bottom: 0.75rem;
+    line-height: 1;
+}
+
+.empty-state-block .empty-state-message {
+    font-size: 0.95rem;
+    color: var(--text-secondary);
+    margin: 0;
+}
+
+.empty-state-block .empty-state-hint {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
+}
+
+/* ---------- CONSULTATION FLAGS (✓ / —) ---------- */
+.pc-flag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    margin-right: 0.6rem;
+    white-space: nowrap;
+}
+
+.pc-flag-yes { color: var(--success); }
+.pc-flag-no { color: var(--text-muted); }
+
+/* ---------- CONSULTATION RECORDS: CLICKABLE PATIENT NAME ---------- */
+.cr-patient-link {
+    color: var(--brand-primary);
+    font-weight: 600;
+    text-decoration: none;
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    font-family: var(--font-body);
+    font-size: 0.85rem;
+    cursor: pointer;
+    text-align: left;
+    line-height: inherit;
+}
+
+.cr-patient-link:hover {
+    text-decoration: underline;
+    color: var(--brand-primary-light);
+}
+
+/* Clickable consult row (whole <tr> opens patient history popup) */
+.cr-clickable-row {
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.cr-clickable-row:hover {
+    background: #F0ECE6;
+}
+
+.cr-clickable-row td {
+    transition: color 0.15s ease;
+}
+
+.cr-clickable-row:hover td {
+    color: var(--brand-primary);
+}
+
+.cr-patient-name {
+    color: var(--brand-primary);
+    font-weight: 600;
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-underline-offset: 3px;
+}
+
+/* Timeline detail lines (medicines / labs / gamot items) */
+.tl-detail {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    margin-top: 0.25rem;
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+.tl-detail-label {
+    font-weight: 700;
+    color: var(--brand-primary);
+}
+
+/* ---------- PATIENT HISTORY MODAL (ph-*) ---------- */
+.ph-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+}
+
+.ph-modal[hidden] {
+    display: none;
+}
+
+.ph-modal:not([hidden]) {
+    display: flex;
+}
+
+.ph-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(26, 26, 46, 0.55);
+    backdrop-filter: blur(2px);
+}
+
+.ph-panel {
+    position: relative;
+    width: 100%;
+    max-width: 500px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    overflow: hidden;
+    box-shadow: var(--shadow-lg);
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    animation: phFadeIn 0.18s ease-out;
+}
+
+@keyframes phFadeIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.ph-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--brand-primary);
+    color: #fff;
+    flex-shrink: 0;
+}
+
+.ph-title {
+    font-family: var(--font-heading);
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin: 0;
+    color: #fff;
+    border: none;
+    padding: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ph-close {
+    background: transparent;
+    border: none;
+    color: #fff;
+    font-size: 1.5rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 0.25rem;
+    border-radius: var(--radius-sm);
+    transition: background 0.2s, color 0.2s;
+    flex-shrink: 0;
+}
+
+.ph-close:hover {
+    background: rgba(255, 255, 255, 0.18);
+    color: var(--brand-accent-light);
+}
+
+.ph-body {
+    padding: 1.25rem;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.ph-loading {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    text-align: center;
+    padding: 2rem 0;
+    font-style: italic;
+}
+
+/* Timeline flags inside the modal */
+.ph-flags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-top: 0.4rem;
+}
+
+.ph-flag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 0.2rem 0.55rem;
+    border-radius: 20px;
+    white-space: nowrap;
+}
+
+.ph-flag-yes {
+    background: rgba(45, 106, 79, 0.12);
+    color: var(--success);
+}
+
+.ph-flag-no {
+    background: #E8E4E0;
+    color: var(--text-muted);
+}
+
+/* Neater timeline items inside the modal */
+.ph-body .timeline-item {
+    padding: 0.6rem 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.ph-body .timeline-item:last-child {
+    border-bottom: none;
+    padding-bottom: 0.25rem;
+}
+
+.ph-body .timeline-item .tl-title {
+    margin: 0.15rem 0;
+}
+
+.ph-body .timeline-item .tl-sub {
+    line-height: 1.5;
+}
+
+/* ---------- PATIENT AUTOCOMPLETE (live-search dropdown) ---------- */
+.ph-autocomplete {
+    position: relative;
+}
+
+.ph-autocomplete-list {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin-top: 4px;
+    list-style: none;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-md);
+    max-height: 280px;
+    overflow-y: auto;
+    z-index: 50;
+    padding: 0;
+}
+
+.ph-autocomplete-list[hidden] {
+    display: none;
+}
+
+.ph-autocomplete-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.85rem;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+}
+
+.ph-autocomplete-item:last-child {
+    border-bottom: none;
+}
+
+.ph-autocomplete-item:hover,
+.ph-autocomplete-item.ph-autocomplete-active {
+    background: var(--bg-app);
+}
+
+.ph-autocomplete-hint {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    white-space: nowrap;
+}
+
+.ph-autocomplete-empty {
+    padding: 0.6rem 0.75rem;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* ---------- PATIENT CONSULTATION TABS ---------- */
+.ph-tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.25rem;
+    border-bottom: 2px solid var(--border);
+}
+
+.ph-tab {
+    padding: 0.6rem 1rem;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    transition: color 0.2s ease, border-color 0.2s ease;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.ph-tab:hover {
+    color: var(--brand-primary);
+}
+
+.ph-tab-active {
+    color: var(--brand-primary);
+    border-bottom-color: var(--brand-accent);
+}
+
+/* Tab panels (hidden by default; the active one is shown) */
+.tab-panel[hidden] {
+    display: none;
+}
+
 /* ---------- PRINT ---------- */
 @media print {
     .sidebar, .sidebar-toggle, .sidebar-overlay, .topbar, .btn, .filter-form,
@@ -1150,8 +1633,8 @@ table td .num, table td.mono {
         print-color-adjust: exact;
     }
 
-    .bar-fill, .status-pill.done, .badge {
-        -webkit-print-color-adjust: exact;
+.bar-fill, .status-pill.done, .badge {
+-webkit-print-color-adjust: exact;
         print-color-adjust: exact;
     }
 }
