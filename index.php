@@ -80,6 +80,26 @@ function is_fpe_meds_type($conn, $meds_type_id) {
     return $row ? (int)$row['is_consultation'] === 0 : true;
 }
 
+/**
+ * Find the single Daily Log row for a patient. Existing rows are moved to a
+ * new date instead of creating a duplicate entry for the same patient.
+ */
+function find_existing_daily_log_record($conn, $patient_name) {
+    $stmt = $conn->prepare("
+        SELECT record_id, record_date
+        FROM daily_records
+        WHERE TRIM(patient_name) = ?
+        ORDER BY created_at ASC, record_id ASC
+        LIMIT 1
+    ");
+    $stmt->bind_param('s', $patient_name);
+    $stmt->execute();
+    $record = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    return $record ?: false;
+}
+
 // Ensure necessary JSON columns exist
 $check_meds = $conn->query("SHOW COLUMNS FROM daily_records LIKE 'record_medications'");
 if ($check_meds && $check_meds->num_rows === 0) {
@@ -335,23 +355,32 @@ if ($action === 'add') {
             : null;
 
 if (!empty($record_date) && !empty($patient_name)) {
-            // HARD BLOCK (shared rule): a patient can be registered (FPE) exactly
-            // once, ever. If the submitted meds_type is an FPE/non-consultation
-            // type AND the patient is already registered, reject the insert.
-            // Non-FPE types (Consultation/Follow Up/Walk-in) are never restricted.
-            $blocked = false;
-            if (is_fpe_meds_type($conn, $meds_type_id)) {
-                $existing = patient_is_registered($conn, $patient_name);
-                if ($existing !== false) {
-                    $blocked = true;
-                    $reg_date = (isset($existing['record_date']) && $existing['record_date'])
-                        ? ' (first registered ' . date('M j, Y', strtotime($existing['record_date'])) . ')'
-                        : '';
-                    $msg = "This patient is already registered" . $reg_date . ". New visits are logged as a Consultation. <a href='patient-consultation.php?q=" . urlencode($patient_name) . "'>Go log a Consultation instead →</a>";
+            $existing_record = find_existing_daily_log_record($conn, $patient_name);
+            if ($existing_record) {
+                if ($existing_record['record_date'] === $record_date) {
+                    redirect_with_msg(
+                        'index.php?date=' . $record_date,
+                        'This patient is already recorded for this date. No duplicate was created.',
+                        'error'
+                    );
                 }
-            }
 
-            if (!$blocked) {
+                // Preserve the original FPE/consultation type and saved details.
+                // The existing Daily Log row is moved instead of duplicated.
+                $move = $conn->prepare("UPDATE daily_records SET record_date = ? WHERE record_id = ?");
+                $move->bind_param('si', $record_date, $existing_record['record_id']);
+                $moved = $move->execute();
+                $move_error = $move->error;
+                $move->close();
+
+                if ($moved) {
+                    $old_date = date('M j, Y', strtotime($existing_record['record_date']));
+                    $new_date = date('M j, Y', strtotime($record_date));
+                    redirect_with_msg('index.php?date=' . $record_date, "Patient record moved from {$old_date} to {$new_date}.");
+                }
+
+                $msg = 'Error moving the existing patient record: ' . $move_error;
+            } else {
                 $stmt = $conn->prepare("INSERT INTO daily_records (record_date, patient_name, physician_id, meds_type_id, has_meds, record_medications, has_gamot_meds, record_gamot, has_labs, record_labs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
                 $stmt->bind_param("ssiiisisis", $record_date, $patient_name, $physician_id, $meds_type_id, $has_meds, $selected_meds, $has_gamot_meds, $selected_gamot, $has_labs, $selected_labs);
                 if ($stmt->execute()) {
@@ -505,7 +534,7 @@ $offset = ($page - 1) * $per_page;
 
 $total_dates = (int)$conn->query("SELECT COUNT(DISTINCT record_date) AS cnt FROM daily_records")->fetch_assoc()['cnt'];
 $total_pages = max(1, ceil($total_dates / $per_page));
-$dates_result = $conn->query("SELECT record_date, COUNT(*) as total FROM daily_records GROUP BY record_date ORDER BY record_date DESC LIMIT $per_page OFFSET $offset");
+$dates_result = $conn->query("SELECT record_date, COUNT(DISTINCT LOWER(TRIM(patient_name))) AS total FROM daily_records GROUP BY record_date ORDER BY record_date DESC LIMIT $per_page OFFSET $offset");
 
 $physicians_list = $conn->query("SELECT physician_id, physician_name FROM physicians WHERE is_active = 1 ORDER BY physician_name")->fetch_all(MYSQLI_ASSOC);
 $meds_types_list = $conn->query("SELECT meds_type_id, meds_type_name, is_consultation FROM meds_types ORDER BY meds_type_name")->fetch_all(MYSQLI_ASSOC);
@@ -532,7 +561,14 @@ if ($filter_meds_type > 0) {
 }
 
 $query = "
-    SELECT dr.*, p.physician_name, mt.meds_type_name 
+    SELECT dr.*, p.physician_name, mt.meds_type_name,
+           (
+               SELECT MIN(fpe.record_date)
+               FROM daily_records fpe
+               LEFT JOIN meds_types fpe_mt ON fpe.meds_type_id = fpe_mt.meds_type_id
+               WHERE TRIM(fpe.patient_name) = TRIM(dr.patient_name)
+                 AND (fpe.meds_type_id IS NULL OR fpe_mt.is_consultation = 0)
+           ) AS fpe_date
     FROM daily_records dr 
     LEFT JOIN physicians p ON dr.physician_id = p.physician_id 
     LEFT JOIN meds_types mt ON dr.meds_type_id = mt.meds_type_id 
@@ -545,11 +581,19 @@ $records_stmt->execute();
 $records_rows = $records_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $records_stmt->close();
 
-// Note: rows are already adjacent-grouped for the same patient by the
-// ORDER BY dr.patient_name ASC above. The visual "hide repeat name" cosmetic
-// pass is handled entirely on the client side (see the JS at the bottom of
-// the page) so it cannot corrupt the row/cell structure. The PHP side does
-// not do any grouping here.
+// Daily Log is a patient profile view: show one row per patient for the
+// selected date. If that patient has an FPE and a consultation on the same
+// day, retain the most recently created visit as the row summary. Both visits
+// remain available through the History action.
+$patient_rows = [];
+foreach ($records_rows as $row) {
+    $patient_key = mb_strtolower(normalize_patient_name($row['patient_name']));
+
+    if (!isset($patient_rows[$patient_key]) || $row['created_at'] >= $patient_rows[$patient_key]['created_at']) {
+        $patient_rows[$patient_key] = $row;
+    }
+}
+$records_rows = array_values($patient_rows);
 
 $has_filters = (!empty($search_query) || $filter_physician > 0 || $filter_meds_type > 0);
 
@@ -1036,7 +1080,7 @@ include 'includes/header.php';
         <div class="card-box">
             <div class="card-title">
                 Records (<?= h(date('F j, Y', strtotime($selected_date))) ?>)
-                <span style="font-size: 0.85rem; font-weight: normal; color: var(--text-muted);"><?= count($records_rows) ?> Entry(ies)</span>
+                <span style="font-size: 0.85rem; font-weight: normal; color: var(--text-muted);"><?= count($records_rows) ?> Patient(s)</span>
             </div>
 
 <div class="table-responsive">
@@ -1063,6 +1107,11 @@ include 'includes/header.php';
                             <tr class="clickable-row" onclick="openSummaryModal(<?= htmlspecialchars(json_encode($row), ENT_QUOTES, 'UTF-8') ?>)">
                                 <td data-patient="<?= h($current_norm) ?>">
                                     <span class="patient-name-text"><?= h($row['patient_name']) ?></span>
+                                    <?php if (!empty($row['fpe_date'])): ?>
+                                        <small style="display: block; margin-top: 0.2rem; color: var(--text-muted); font-size: 0.75rem;">
+                                            First FPE: <?= h(date('M j, Y', strtotime($row['fpe_date']))) ?>
+                                        </small>
+                                    <?php endif; ?>
                                 </td>
                                 <td><?= h($row['physician_name'] ?? '—') ?></td>
                                 <td><?= h($row['meds_type_name'] ?? '—') ?></td>
@@ -1101,21 +1150,6 @@ include 'includes/header.php';
                     </tbody>
                 </table>
 
-<script>
-(function () {
-    var rows = document.querySelectorAll('#records-table tbody tr');
-    var prev = null;
-    rows.forEach(function (row) {
-        var cell = row.querySelector('td[data-patient]');
-        if (!cell) { prev = null; return; }
-        var name = cell.getAttribute('data-patient');
-        if (name !== '' && name === prev) {
-            cell.style.visibility = 'hidden';
-        }
-        prev = name;
-    });
-})();
-</script>
             </div>
         </div>
     </main>
@@ -1440,134 +1474,9 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// ============================================================
-// SECOND-FPE WARNING (Add-new-row + Edit meds_type selects)
-// ============================================================
-// Warns the user before knowingly adding a SECOND FPE/intake record for the
-// same patient. FPE options carry data-is-fpe="1". The check is async via the
-// check_existing_fpe AJAX endpoint on index.php.
-const fpeCache = {};
-
-function warnIfDuplicateFpe(patientName, isFpeOption, okCb, cancelCb) {
-    const name = (patientName || '').trim();
-    if (!name || !isFpeOption) {
-        if (okCb) okCb();
-        return;
-    }
-
-    const finish = (hasFpe, lastDate) => {
-        if (hasFpe) {
-            const msg = lastDate
-                ? '⚠️ This patient already has an FPE/intake record (' + lastDate + ').\n\nAdding another FPE entry may create a duplicate. Continue anyway?'
-                : '⚠️ This patient already has an FPE/intake record.\n\nAdding another FPE entry may create a duplicate. Continue anyway?';
-            if (window.confirm(msg)) {
-                if (okCb) okCb();
-            } else {
-                if (cancelCb) cancelCb();
-            }
-        } else {
-            if (okCb) okCb();
-        }
-    };
-
-    if (fpeCache[name]) {
-        finish(fpeCache[name].hasFpe, fpeCache[name].lastFpeDate);
-        return;
-    }
-
-    fetch('index.php?ajax=check_existing_fpe&name=' + encodeURIComponent(name))
-        .then(r => r.json())
-        .then(data => {
-            fpeCache[name] = { hasFpe: !!data.has_fpe, lastFpeDate: data.last_fpe_date || null };
-            finish(fpeCache[name].hasFpe, fpeCache[name].lastFpeDate);
-        })
-        .catch(() => {
-            // On network error, don't block the user.
-            if (okCb) okCb();
-        });
-}
-
-// Attach to the Add-new-row meds_type select.
-(function initAddFpeGuard() {
-    const addSelect = document.getElementById('add_meds_type_id');
-    if (addSelect) {
-        addSelect.addEventListener('change', function () {
-            const sel = this.options[this.selectedIndex];
-            const isFpe = sel ? sel.dataset.isFpe === '1' : false;
-            const patientInput = document.querySelector('form[action="index.php"] input[name="patient_name"]');
-            if (!patientInput) return;
-            const name = patientInput.value;
-            if (isFpe) {
-                warnIfDuplicateFpe(name, true, null, function () {
-                    // Revert to the placeholder if the user cancels.
-                    addSelect.value = '';
-                });
-            }
-        });
-    }
-})();
-
-// HARD BLOCK on Add form submit: if an FPE/non-consultation type is selected
-// and this patient already has an FPE row on file (confirmed via AJAX), block
-// the submission and show an inline error instead of silently allowing a
-// duplicate. This mirrors the server-side guard in the 'add' handler.
-(function initAddSubmitFpeGuard() {
-    const addForm = document.querySelector('form[action="index.php"]');
-    const addSelect = document.getElementById('add_meds_type_id');
-    const addBtn = document.getElementById('add_record_btn');
-    const errorEl = document.getElementById('add_fpe_error');
-    if (!addForm || !addSelect || !addBtn) return;
-
-    let checking = false;
-
-    addForm.addEventListener('submit', function (e) {
-        // Clear any previous inline error.
-        if (errorEl) errorEl.textContent = '';
-
-        const sel = addSelect.options[addSelect.selectedIndex];
-        const isFpe = sel ? sel.dataset.isFpe === '1' : false;
-
-        // Not an FPE type — allow normal submission.
-        if (!isFpe) return;
-
-        const patientInput = addForm.querySelector('input[name="patient_name"]');
-        const name = (patientInput ? patientInput.value : '').trim();
-        if (!name) return; // Let the browser's required check handle empty name.
-
-        // Prevent the default submit while we check asynchronously.
-        e.preventDefault();
-
-        if (checking) return; // Avoid double-submit while a check is in flight.
-        checking = true;
-        addBtn.disabled = true;
-
-        fetch('index.php?ajax=check_existing_fpe&name=' + encodeURIComponent(name))
-            .then(function (r) { return r.json(); })
-            .then(function (data) {
-                checking = false;
-                addBtn.disabled = false;
-
-                if (data.has_fpe) {
-                    if (errorEl) {
-                        errorEl.textContent = (data.last_fpe_date
-                            ? '⚠️ This patient already has an FPE record (' + data.last_fpe_date + '). Please choose a different visit type.'
-                            : '⚠️ This patient already has an FPE record. Please choose a different visit type.');
-                    }
-                    // Do NOT submit — block the duplicate.
-                    return;
-                }
-
-                // No existing FPE — submit the form normally.
-                addForm.submit();
-            })
-            .catch(function () {
-                checking = false;
-                addBtn.disabled = false;
-                // On network error, do not block the user (server will validate).
-                addForm.submit();
-            });
-    });
-})();
+// The add form submits directly. The server decides whether it creates a new
+// patient record, moves an existing one to the chosen date, or rejects a
+// duplicate for the same date.
 
 // ============================================================
 // PATIENT HISTORY MODAL (fetch timeline fragment from patient_history.php)
