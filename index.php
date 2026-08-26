@@ -9,22 +9,20 @@ require_once 'includes/auth.php';
 // 2nd Tranche is an administrative encoding status only.
 // It is stored separately from daily_records, so it NEVER affects visits.
 $tranche_status_file = __DIR__ . DIRECTORY_SEPARATOR . 'yakap_2nd_tranche.json';
-$pcu_status_file = __DIR__ . '/pcu_status.json';
-$pcu_status = [];
+$pcu_status_file = __DIR__ . '/pcu_status.json';$pcu_status = [];
 
-$pcu_profile_file = __DIR__ . '/pcu_patient_profiles.json';
-$pcu_profiles = [];
+$pcu_profile_file = __DIR__ . '/pcu_patient_profiles.json';$pcu_profiles = [];
 if (file_exists($pcu_profile_file)) {
     $decoded_profiles = json_decode(file_get_contents($pcu_profile_file), true);
     if (is_array($decoded_profiles)) {
-        $pcu_profiles = $decoded_profiles;
+        $pcu_profiles =$decoded_profiles;
     }
 }
 if (file_exists($pcu_status_file)) {
     $decoded_pcu = json_decode(file_get_contents($pcu_status_file), true);
-    if (is_array($decoded_pcu)) foreach ($decoded_pcu as $name => $value) {
+    if (is_array($decoded_pcu)) foreach ($decoded_pcu as $name =>$value) {
         $key = mb_strtolower(normalize_patient_name((string)$name));
-        if ($key !== '') $pcu_status[$key] = $value;
+        if ($key !== '')$pcu_status[$key] =$value;
     }
 }
 $second_tranche_status = [];
@@ -32,16 +30,15 @@ if (is_file($tranche_status_file) && is_readable($tranche_status_file)) {
     $raw_tranche = @file_get_contents($tranche_status_file);
     $decoded_tranche = json_decode((string)$raw_tranche, true);
     if (is_array($decoded_tranche)) {
-        foreach ($decoded_tranche as $stored_name => $stored_value) {
+        foreach ($decoded_tranche as $stored_name =>$stored_value) {
             $normalized_key = mb_strtolower(normalize_patient_name((string)$stored_name));
-            if ($normalized_key !== '') {
-                $second_tranche_status[$normalized_key] = $stored_value;
+            if ($normalized_key !== '') {$second_tranche_status[$normalized_key] =$stored_value;
             }
         }
     }
 }
 
-function is_second_tranche_patient($patient_name, $status) {
+function is_second_tranche_patient($patient_name,$status) {
     $key = mb_strtolower(normalize_patient_name($patient_name));
     return $key !== '' && isset($status[$key]);
 }
@@ -63,7 +60,7 @@ function is_second_tranche_patient($patient_name, $status) {
  * @param int|null $exclude_record_id Optional record_id to exclude on update.
  * @return array|false ['record_date' => string, 'physician_name' => string|null]
  */
-function get_existing_fpe($conn, $patient_name, $exclude_record_id = null) {
+function get_existing_fpe($conn, $patient_name,$exclude_record_id = null) {
     if ($patient_name === '') return false;
 
     $sql = "
@@ -75,8 +72,7 @@ function get_existing_fpe($conn, $patient_name, $exclude_record_id = null) {
     $types = 's';
     $params = [$patient_name];
 
-    if ($exclude_record_id !== null) {
-        $sql .= " AND dr.record_id != ?";
+    if ($exclude_record_id !== null) {$sql .= " AND dr.record_id != ?";
         $types .= 'i';
         $params[] = (int)$exclude_record_id;
     }
@@ -84,11 +80,8 @@ function get_existing_fpe($conn, $patient_name, $exclude_record_id = null) {
     // Earliest record = First FPE date, regardless of visit type.
     $sql .= " ORDER BY dr.record_date ASC, dr.created_at ASC, dr.record_id ASC LIMIT 1";
 
-    $stmt = $conn->prepare($sql);
-    $stmt->bind_param($types, ...$params);
-    $stmt->execute();
-    $row = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
+    $stmt =$conn->prepare($sql);$stmt->bind_param($types, ...$params);
+    $stmt->execute();$row = $stmt->get_result()->fetch_assoc();$stmt->close();
 
     return $row ? $row : false;
 }
@@ -98,8 +91,7 @@ function get_existing_fpe($conn, $patient_name, $exclude_record_id = null) {
  * date, or false if the patient has never been recorded. Used by the
  * check_existing_fpe AJAX endpoint.
  */
-function patient_has_fpe($conn, $patient_name) {
-    $fpe = get_existing_fpe($conn, $patient_name);
+function patient_has_fpe($conn, $patient_name) {$fpe = get_existing_fpe($conn,$patient_name);
     return $fpe ? $fpe['record_date'] : false;
 }
 
@@ -118,6 +110,19 @@ function is_fpe_meds_type($conn, $meds_type_id) {
     $stmt->close();
 
     return $row ? (int)$row['is_consultation'] === 0 : true;
+}
+
+/**
+ * Return the Meds Type ID used for Consultation visits.
+ * Prefer the exact label "Consultation" and fall back to the first
+ * consultation-enabled meds type if the label was renamed.
+ */
+function get_consultation_meds_type_id($conn) {
+    $stmt = $conn->prepare("SELECT meds_type_id FROM meds_types WHERE is_consultation = 1 ORDER BY (LOWER(meds_type_name) = 'consultation') DESC, meds_type_id ASC LIMIT 1");
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $row ? (int)$row['meds_type_id'] : null;
 }
 
 // Ensure necessary JSON columns exist
@@ -252,6 +257,81 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'check_registered') {
     exit;
 }
 
+// --- HANDLE REAL-TIME AJAX FILTER ENDPOINT ---
+if (isset($_GET['ajax']) && $_GET['ajax'] === 'filter_records') {
+    header('Content-Type: application/json; charset=utf-8');
+    $selected_date = $_GET['date'] ?? date('Y-m-d');
+    $search_query = trim($_GET['search'] ?? '');
+    $filter_physician = isset($_GET['filter_physician']) ? (int)$_GET['filter_physician'] : 0;
+    $filter_meds_type = isset($_GET['filter_meds_type']) ? (int)$_GET['filter_meds_type'] : 0;
+
+    $where_clauses = ["dr.record_date = ?"];
+    $params = [$selected_date]; 
+    $types = "s";
+
+    if (!empty($search_query)) { 
+        $where_clauses[] = "dr.patient_name LIKE ?"; 
+        $params[] = '%' . $search_query . '%'; 
+        $types .= "s"; 
+    }
+    if ($filter_physician > 0) { 
+        $where_clauses[] = "dr.physician_id = ?"; 
+        $params[] = $filter_physician; 
+        $types .= "i"; 
+    }
+    if ($filter_meds_type > 0) { 
+        $where_clauses[] = "dr.meds_type_id = ?"; 
+        $params[] = $filter_meds_type; 
+        $types .= "i"; 
+    }
+
+    $query = "
+        SELECT dr.*, p.physician_name, mt.meds_type_name,
+               (
+                   SELECT MIN(first_visit.record_date)
+                   FROM daily_records first_visit
+                   WHERE TRIM(first_visit.patient_name) = TRIM(dr.patient_name)
+               ) AS fpe_date
+        FROM daily_records dr 
+        LEFT JOIN physicians p ON dr.physician_id = p.physician_id 
+        LEFT JOIN meds_types mt ON dr.meds_type_id = mt.meds_type_id 
+        WHERE " . implode(" AND ", $where_clauses) . " 
+        ORDER BY dr.created_at DESC, dr.record_id DESC
+    ";
+    $records_stmt = $conn->prepare($query);
+    if (!empty($types)) {
+        $records_stmt->bind_param($types, ...$params);
+    }
+    $records_stmt->execute();
+    $records_rows = $records_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $records_stmt->close();
+
+    $patient_rows = [];
+    foreach ($records_rows as $row) {
+        $patient_key = mb_strtolower(normalize_patient_name($row['patient_name']));
+        if (!isset($patient_rows[$patient_key]) || $row['created_at'] >= $patient_rows[$patient_key]['created_at']) {
+            $patient_rows[$patient_key] = $row;
+        }
+    }
+    $records_rows = array_values($patient_rows);
+
+    foreach ($records_rows as &$display_row) {
+        $display_row['second_tranche'] = is_second_tranche_patient($display_row['patient_name'], $second_tranche_status) ? 1 : 0;
+        $pcu_key = mb_strtolower(normalize_patient_name($display_row['patient_name']));
+        $display_row['pcu_done'] = isset($pcu_status[$pcu_key]) ? 1 : 0;
+        $display_row['pcu_profile'] = $pcu_profiles[$pcu_key] ?? [];
+    }
+    unset($display_row);
+
+    echo json_encode([
+        'success' => true,
+        'count' => count($records_rows),
+        'records' => $records_rows,
+        'selected_date' => $selected_date
+    ]);
+    exit;
+}
+
 // --- HANDLE CSV EXPORT ---
 if (isset($_GET['export']) && $_GET['export'] === 'csv') {
     $exp_date = selected_date();
@@ -360,10 +440,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $has_meds = isset($_POST['has_meds']) ? 1 : 0;
         $has_labs = isset($_POST['has_labs']) ? 1 : 0;
         $has_gamot_meds = isset($_POST['has_gamot_meds']) ? 1 : 0;
-        
+
+        // Any selected service (Meds/Labs/Gamot) is a Consultation.
+        // The rule is enforced server-side so it cannot be bypassed by
+        // manually submitting the form.
+        $has_consultation_service = ($has_meds || $has_labs || $has_gamot_meds);
+        if ($has_consultation_service) {
+            $consultation_type_id = get_consultation_meds_type_id($conn);
+            if ($consultation_type_id !== null) {
+                $meds_type_id = $consultation_type_id;
+            }
+        }
+
         $selected_meds = ($has_meds && isset($_POST['medications']) && is_array($_POST['medications'])) ? json_encode(array_values($_POST['medications'])) : null;
         $selected_gamot = ($has_gamot_meds && isset($_POST['gamot_meds']) && is_array($_POST['gamot_meds'])) ? json_encode(array_values($_POST['gamot_meds'])) : null;
         $selected_labs = ($has_labs && isset($_POST['labs']) && is_array($_POST['labs'])) ? json_encode(array_values($_POST['labs'])) : null;
+
+        $is_consultation_visit = $meds_type_id !== null && !is_fpe_meds_type($conn, $meds_type_id);
+        if ($is_consultation_visit && empty($physician_id)) {
+            redirect_with_msg(
+                'index.php?date=' . $record_date,
+                'A physician is required for a Consultation. Please select a physician before saving.',
+                'error'
+            );
+        }
 
         if (!empty($record_date) && !empty($patient_name)) {
             $dup_stmt = $conn->prepare("SELECT record_id FROM daily_records WHERE TRIM(patient_name) = ? AND record_date = ? LIMIT 1");
@@ -416,9 +516,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $has_gamot_meds = isset($_POST['has_gamot_meds']) ? 1 : 0;
         $record_date = $_POST['record_date'] ?? '';
 
+        // Any selected service means this edited record is a Consultation.
+        $has_consultation_service = ($has_meds || $has_labs || $has_gamot_meds);
+        if ($has_consultation_service) {
+            $consultation_type_id = get_consultation_meds_type_id($conn);
+            if ($consultation_type_id !== null) {
+                $meds_type_id = $consultation_type_id;
+            }
+        }
+
         $selected_meds = ($has_meds && isset($_POST['medications']) && is_array($_POST['medications'])) ? json_encode(array_values($_POST['medications'])) : null;
         $selected_gamot = ($has_gamot_meds && isset($_POST['gamot_meds']) && is_array($_POST['gamot_meds'])) ? json_encode(array_values($_POST['gamot_meds'])) : null;
         $selected_labs = ($has_labs && isset($_POST['labs']) && is_array($_POST['labs'])) ? json_encode(array_values($_POST['labs'])) : null;
+
+        $is_consultation_visit = $meds_type_id !== null && !is_fpe_meds_type($conn, $meds_type_id);
+        if ($is_consultation_visit && empty($physician_id)) {
+            redirect_with_msg(
+                'index.php?date=' . $record_date,
+                'A physician is required for a Consultation. Please select a physician before saving.',
+                'error'
+            );
+        }
 
         if ($record_id > 0 && !empty($patient_name)) {
             if (is_fpe_meds_type($conn, $meds_type_id)) {
@@ -543,6 +661,33 @@ $has_filters = (!empty($search_query) || $filter_physician > 0 || $filter_meds_t
 
 include 'includes/header.php';
 ?><style>
+/* Print-specific layout rules */
+@media print {
+    body * {
+        visibility: hidden;
+    }
+    #printable-patient-list, #printable-patient-list * {
+        visibility: visible;
+    }
+    #printable-patient-list {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        margin: 0;
+        padding: 20px;
+        background: #fff;
+    }
+    .no-print {
+        display: none !important;
+    }
+}
+
+#printable-patient-list {
+    display: none;
+}
+</style>
+<style>
 /* Compact Single-Row Add Patient Panel */
 .add-patient-panel { 
     padding: 0.6rem 1rem !important; 
@@ -1031,9 +1176,55 @@ body {
 
 <div class="page-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
     <h2>📋 Daily Log</h2>
-    <div>
+    <div style="display: flex; gap: 0.5rem;">
+        <button type="button" class="btn btn-blue btn-sm" onclick="printDailyPatients()">🖨️ Print Patient List</button>
         <a href="?date=<?= h($selected_date) ?>&export=csv" class="btn btn-blue btn-sm">📥 Export CSV</a>
     </div>
+</div>
+
+<!-- Hidden Printable Layout Structure -->
+<div id="printable-patient-list">
+    <div style="text-align: center; margin-bottom: 20px;">
+        <h2>YAKAP-GAMOT patient list</h2>
+        <p style="font-size: 14px; color: #555;">Date: <?= h(date('F j, Y', strtotime($selected_date))) ?></p>
+    </div>
+
+    <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px;">
+        <thead>
+            <tr style="background-color: #f2f2f2;">
+                <th style="border: 1px solid #333; padding: 6px; text-align: center; width: 5%;">No.</th>
+                <th style="border: 1px solid #333; padding: 6px; text-align: left; width: 25%;">Patient Full Name</th>
+                <th style="border: 1px solid #333; padding: 6px; text-align: center; width: 10%;">PCU Check</th>
+                <th style="border: 1px solid #333; padding: 6px; text-align: left; width: 20%;">GAMOT</th>
+                <th style="border: 1px solid #333; padding: 6px; text-align: left; width: 20%;">MEDS</th>
+                <th style="border: 1px solid #333; padding: 6px; text-align: left; width: 20%;">LABS</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php if (empty($records_rows)): ?>
+                <tr>
+                    <td colspan="6" style="border: 1px solid #333; padding: 12px; text-align: center;">No patient records found for today.</td>
+                </tr>
+            <?php else: 
+                $counter = 1;
+                foreach ($records_rows as $row): 
+                    $print_gamot = !empty($row['record_gamot']) ? implode(', ', json_decode($row['record_gamot'], true) ?? []) : '';
+                    $print_meds  = !empty($row['record_medications']) ? implode(', ', json_decode($row['record_medications'], true) ?? []) : '';
+                    $print_labs  = !empty($row['record_labs']) ? implode(', ', json_decode($row['record_labs'], true) ?? []) : '';
+                    
+                    $pcu_checked_status = !empty($row['pcu_done']) ? '[ ✓ ] PCU' : '[ &nbsp; ]';
+            ?>
+                <tr>
+                    <td style="border: 1px solid #333; padding: 6px; text-align: center;"><?= $counter++ ?></td>
+                    <td style="border: 1px solid #333; padding: 6px; font-weight: bold;"><?= h($row['patient_name']) ?></td>
+                    <td style="border: 1px solid #333; padding: 6px; text-align: center;"><?= $pcu_checked_status ?></td>
+                    <td style="border: 1px solid #333; padding: 6px;"><?= !empty($print_gamot) ? h($print_gamot) : '<span style="color:#888; font-style:italic;">None</span>' ?></td>
+                    <td style="border: 1px solid #333; padding: 6px;"><?= !empty($print_meds) ? h($print_meds) : '<span style="color:#888; font-style:italic;">None</span>' ?></td>
+                    <td style="border: 1px solid #333; padding: 6px;"><?= !empty($print_labs) ? h($print_labs) : '<span style="color:#888; font-style:italic;">None</span>' ?></td>
+                </tr>
+            <?php endforeach; endif; ?>
+        </tbody>
+    </table>
 </div>
 
 <div class="dashboard-container">
@@ -1089,7 +1280,7 @@ body {
             </div>
 
             <div id="add-patient-form-wrap" hidden>
-                <form method="post" action="index.php" autocomplete="off">
+                <form method="post" action="index.php" autocomplete="off" onsubmit="return validatePatientRecordForm(this);">
                 <input type="hidden" name="action" value="add">
                 <input type="hidden" name="record_date" value="<?= h($selected_date) ?>">
 
@@ -1100,7 +1291,7 @@ body {
                         <ul id="add-suggestions" class="custom-suggestions-list"></ul>
                     </div>
 
-                    <select name="physician_id" style="padding: 0.4rem 0.6rem; border: 1px solid var(--border-color); border-radius: var(--radius-sm); outline:none; background:#fff; font-size: 0.85rem;">
+                    <select name="physician_id" id="add_physician_id" style="padding: 0.4rem 0.6rem; border: 1px solid var(--border-color); border-radius: var(--radius-sm); outline:none; background:#fff; font-size: 0.85rem;">
                         <option value="">-- Physician --</option>
                         <?php foreach ($physicians_list as $p): ?>
                             <option value="<?= (int)$p['physician_id'] ?>"><?= h($p['physician_name']) ?></option>
@@ -1110,18 +1301,18 @@ body {
                     <select name="meds_type_id" id="add_meds_type_id" style="padding: 0.4rem 0.6rem; border: 1px solid var(--border-color); border-radius: var(--radius-sm); outline:none; background:#fff; font-size: 0.85rem;">
                         <option value="">-- Meds Type --</option>
                         <?php foreach ($meds_types_list as $mt): ?>
-                            <option value="<?= (int)$mt['meds_type_id'] ?>" <?= empty($mt['is_consultation']) ? 'data-is-fpe="1"' : '' ?>><?= h($mt['meds_type_name']) ?></option>
+                            <option value="<?= (int)$mt['meds_type_id'] ?>" <?= !empty($mt['is_consultation']) ? 'data-is-consultation="1"' : 'data-is-fpe="1"' ?>><?= h($mt['meds_type_name']) ?></option>
                         <?php endforeach; ?>
                     </select>
 
                     <label class="select-card-box" style="background:#fff; font-size: 0.8rem;">
-                        <input type="checkbox" name="has_meds" value="1" onchange="toggleBox(this, 'add-meds-box')"> Meds
+                        <input type="checkbox" name="has_meds" value="1" onchange="toggleBox(this, 'add-meds-box'); syncConsultationRequirements(this.form)"> Meds
                     </label>
                     <label class="select-card-box" style="background:#fff; font-size: 0.8rem;">
-                        <input type="checkbox" name="has_labs" value="1" onchange="toggleBox(this, 'add-labs-box')"> Labs
+                        <input type="checkbox" name="has_labs" value="1" onchange="toggleBox(this, 'add-labs-box'); syncConsultationRequirements(this.form)"> Labs
                     </label>
                     <label class="select-card-box" style="background:#fff; font-size: 0.8rem;">
-                        <input type="checkbox" name="has_gamot_meds" value="1" onchange="toggleBox(this, 'add-gamot-box')"> Gamot
+                        <input type="checkbox" name="has_gamot_meds" value="1" onchange="toggleBox(this, 'add-gamot-box'); syncConsultationRequirements(this.form)"> Gamot
                     </label>
 
                     <button type="submit" id="add_record_btn" class="btn btn-primary btn-sm" style="padding: 0.4rem 0.8rem;">Save</button>
@@ -1178,39 +1369,40 @@ body {
             </div>
         </div>
 
-        <!-- Filter Bar Card -->
+        <!-- Filter Bar Card (Enhanced for Real-Time AJAX Filtering) -->
         <div class="card-box" style="padding: 0.85rem 1.25rem;">
-            <form method="get" action="index.php" class="filter-bar">
-                <input type="hidden" name="date" value="<?= h($selected_date) ?>">
-                <span style="font-weight:600; font-size: 0.85rem; color: var(--text-muted);">Filters:</span>
-                <input type="text" name="search" value="<?= h($search_query) ?>" placeholder="Search patient..." style="width: 200px;">
-                <select name="filter_physician">
+            <div class="filter-bar" id="live-filter-form">
+                <input type="hidden" id="filter_date" value="<?= h($selected_date) ?>">
+                <span style="font-weight:600; font-size: 0.85rem; color: var(--text-muted);">Search & Filter:</span>
+                <div style="position: relative; flex: 1; min-width: 220px; display: flex; align-items: center;">
+                    <span style="position: absolute; left: 10px; font-size: 0.9rem; pointer-events: none;">🔍</span>
+                    <input type="text" id="live_search_input" value="<?= h($search_query) ?>" placeholder="Type patient name..." style="width: 100%; padding-left: 30px; padding-right: 30px;" oninput="triggerLiveSearch()">
+                    <button type="button" id="clear_search_btn" onclick="clearSearchBox()" style="position: absolute; right: 8px; background: none; border: none; font-size: 1rem; cursor: pointer; color: var(--text-muted); display: <?= !empty($search_query) ? 'block' : 'none' ?>;" title="Clear search">&times;</button>
+                </div>
+                <select id="filter_physician" onchange="triggerLiveSearch()">
                     <option value="0">All Physicians</option>
                     <?php foreach ($physicians_list as $doc): ?>
                         <option value="<?= (int)$doc['physician_id'] ?>" <?= $filter_physician === (int)$doc['physician_id'] ? 'selected' : '' ?>><?= h($doc['physician_name']) ?></option>
                     <?php endforeach; ?>
                 </select>
-                <select name="filter_meds_type">
+                <select id="filter_meds_type" onchange="triggerLiveSearch()">
                     <option value="0">All Types</option>
                     <?php foreach ($meds_types_list as $mt): ?>
                         <option value="<?= (int)$mt['meds_type_id'] ?>" <?= $filter_meds_type === (int)$mt['meds_type_id'] ? 'selected' : '' ?>><?= h($mt['meds_type_name']) ?></option>
                     <?php endforeach; ?>
                 </select>
-                <button type="submit" class="btn btn-primary btn-sm">Filter</button>
-                <?php if ($has_filters): ?>
-                    <a href="index.php?date=<?= h($selected_date) ?>" class="btn btn-sm btn-outline">Clear</a>
-                <?php endif; ?>
-            </form>
+                <div id="search_status_indicator" style="font-size: 0.75rem; color: var(--text-muted); display: none;">Updating...</div>
+            </div>
         </div>
 
         <!-- Records Table Card -->
         <div class="card-box">
             <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
-                <span>Records (<?= h(date('F j, Y', strtotime($selected_date))) ?>)</span>
+                <span>Records (<span id="records_date_label"><?= h(date('F j, Y', strtotime($selected_date))) ?></span>)</span>
                 <div style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; font-weight: normal;">
                     <label for="max_lines_input" style="color: var(--text-muted);">Show lines:</label>
                     <input type="number" id="max_lines_input" value="8" min="3" max="50" style="width: 60px; padding: 0.25rem 0.5rem; border: 1px solid var(--border-color); border-radius: var(--radius-sm); outline: none;" onchange="updateTableHeight(this.value)" onkeyup="updateTableHeight(this.value)">
-                    <span style="color: var(--text-muted); background: #f1f5f9; padding: 0.2rem 0.6rem; border-radius: 20px;"><?= count($records_rows) ?> Patient(s)</span>
+                    <span id="records_count_badge" style="color: var(--text-muted); background: #f1f5f9; padding: 0.2rem 0.6rem; border-radius: 20px;"><?= count($records_rows) ?> Patient(s)</span>
                 </div>
             </div>
 
@@ -1228,10 +1420,10 @@ body {
                             <th style="text-align: center;">History</th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody id="records_table_body">
                         <?php if (empty($records_rows)): ?>
                             <tr>
-                                <td colspan="8" style="text-align: center; color: var(--text-muted); padding: 3rem;">
+                                <td colspan="8" style="text-align: center; color: var(--text-muted); padding: 3rem;" id="no_records_row">
                                     <?= $has_filters ? 'No records matching filters.' : 'No records logged for this date.' ?>
                                 </td>
                             </tr>
@@ -1278,10 +1470,10 @@ body {
                                         <input type="hidden" name="patient_name" value="<?= h($row['patient_name']) ?>">
                                         <input type="hidden" name="record_date" value="<?= h($selected_date) ?>">
                                         <button type="button"
-    class="btn btn-sm patient-action-btn <?= !empty($row['pcu_done']) ? 'btn-primary' : 'btn-outline' ?>"
-    data-pcu-done="<?= !empty($row['pcu_done']) ? '1' : '0' ?>"
-    data-patient="<?= h($row['patient_name']) ?>"
-    onclick="togglePCU(this); return false;">
+                                            class="btn btn-sm patient-action-btn <?= !empty($row['pcu_done']) ? 'btn-primary' : 'btn-outline' ?>"
+                                            data-pcu-done="<?= !empty($row['pcu_done']) ? '1' : '0' ?>"
+                                            data-patient="<?= h($row['patient_name']) ?>"
+                                            onclick="togglePCU(this); return false;">
                                             <?= !empty($row['pcu_done']) ? '✓ PCU' : 'PCU' ?>
                                         </button>
                                     </form>
@@ -1300,6 +1492,27 @@ body {
 
 <!-- Global Patient List Array for Autocomplete Dropdown -->
 <script>
+function printDailyPatients() {
+    // Set flag to auto-trigger print dialog after reload fetches fresh data
+    sessionStorage.setItem('trigger_print_after_reload', 'true');
+    window.location.reload();
+}
+
+// Auto-trigger print if flag is detected after reload
+document.addEventListener('DOMContentLoaded', function() {
+    if (sessionStorage.getItem('trigger_print_after_reload') === 'true') {
+        sessionStorage.removeItem('trigger_print_after_reload');
+        setTimeout(() => {
+            const printableArea = document.getElementById('printable-patient-list');
+            if (printableArea) {
+                printableArea.style.display = 'block';
+                window.print();
+                printableArea.style.display = 'none';
+            }
+        }, 500);
+    }
+});
+
 const globalPatientsList = [
     <?php foreach ($patients_list as $p): ?>
         <?= json_encode($p['patient_name']) ?>,
@@ -1349,6 +1562,164 @@ document.addEventListener('click', function(e) {
 
 function escapeJsString(str) {
     return str.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+}
+
+// Real-Time Live Search & Filtering Implementation via Fetch AJAX
+let searchDebounceTimer = null;
+
+function triggerLiveSearch() {
+    clearTimeout(searchDebounceTimer);
+    const searchInput = document.getElementById('live_search_input');
+    const clearBtn = document.getElementById('clear_search_btn');
+    if (searchInput && clearBtn) {
+        clearBtn.style.display = searchInput.value.trim().length > 0 ? 'block' : 'none';
+    }
+    
+    // 150ms debounce for immediate responsive feel without hammering backend
+    searchDebounceTimer = setTimeout(performLiveSearchAjax, 150);
+}
+
+function clearSearchBox() {
+    const searchInput = document.getElementById('live_search_input');
+    if (searchInput) {
+        searchInput.value = '';
+        triggerLiveSearch();
+    }
+}
+
+function performLiveSearchAjax() {
+    const searchVal = document.getElementById('live_search_input') ? document.getElementById('live_search_input').value.trim() : '';
+    const physVal = document.getElementById('filter_physician') ? document.getElementById('filter_physician').value : '0';
+    const medsTypeVal = document.getElementById('filter_meds_type') ? document.getElementById('filter_meds_type').value : '0';
+    const dateVal = document.getElementById('filter_date') ? document.getElementById('filter_date').value : '<?= h($selected_date) ?>';
+    const indicator = document.getElementById('search_status_indicator');
+
+    if (indicator) indicator.style.display = 'inline';
+
+    const params = new URLSearchParams({
+        ajax: 'filter_records',
+        date: dateVal,
+        search: searchVal,
+        filter_physician: physVal,
+        filter_meds_type: medsTypeVal
+    });
+
+    fetch('index.php?' + params.toString(), {
+        method: 'GET',
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'Accept': 'application/json'
+        }
+    })
+    .then(response => {
+        if (!response.ok) throw new Error('Live search request failed');
+        return response.json();
+    })
+    .then(data => {
+        if (!data || !data.success) throw new Error('Invalid response data');
+        renderRecordsTable(data.records);
+    })
+    .catch(error => {
+        console.error('Live search error:', error);
+    })
+    .finally(() => {
+        if (indicator) indicator.style.display = 'none';
+    });
+}
+
+function renderRecordsTable(records) {
+    const tbody = document.getElementById('records_table_body');
+    const badge = document.getElementById('records_count_badge');
+    if (!tbody) return;
+
+    if (badge) {
+        badge.textContent = records.length + ' Patient(s)';
+    }
+
+    if (!records || records.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="8" style="text-align: center; color: var(--text-muted); padding: 3rem;">
+                    No records matching filters.
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    let html = '';
+    records.forEach(row => {
+        const currentNorm = row.patient_name.toLowerCase();
+        const isSecondTranche = parseInt(row.second_tranche) === 1;
+        const pcuDone = parseInt(row.pcu_done) === 1;
+        
+        let fpeHtml = '';
+        if (row.fpe_date) {
+            const fpeDateFormatted = new Date(row.fpe_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            fpeHtml = `<small style="display: block; margin-top: 0.2rem; color: var(--text-muted); font-size: 0.75rem;">First FPE: ${escapeHtml(fpeDateFormatted)}</small>`;
+        }
+
+        let secondTrancheBadgeHtml = isSecondTranche ? '<span class="second-tranche-badge">✓ 2nd Tranche Encoded</span>' : '';
+        let rowClass = isSecondTranche ? 'clickable-row second-tranche-row' : 'clickable-row';
+        let nameClass = isSecondTranche ? 'patient-name-text second-tranche-name' : 'patient-name-text';
+
+        const hasMedsTag = parseInt(row.has_meds) === 1 ? '<span class="tag tag-success">Meds</span>' : '<span class="tag tag-gray">Meds</span>';
+        const hasGamotTag = parseInt(row.has_gamot_meds) === 1 ? '<span class="tag tag-success">Gamot</span>' : '<span class="tag tag-gray">Gamot</span>';
+        const hasLabsTag = parseInt(row.has_labs) === 1 ? '<span class="tag tag-success">Labs</span>' : '<span class="tag tag-gray">Labs</span>';
+
+        const recordJsonEsc = escapeHtml(JSON.stringify(row));
+
+        html += `
+            <tr class="${rowClass}" onclick='openSummaryModal(${recordJsonEsc})'>
+                <td data-patient="${escapeHtml(currentNorm)}">
+                    <span class="${nameClass}">${escapeHtml(row.patient_name)}</span>
+                    ${secondTrancheBadgeHtml}
+                    ${fpeHtml}
+                </td>
+                <td>${escapeHtml(row.physician_name || '—')}</td>
+                <td>${escapeHtml(row.meds_type_name || '—')}</td>
+                <td>
+                    <div style="display:flex; gap: 0.25rem;">
+                        ${hasMedsTag} ${hasGamotTag} ${hasLabsTag}
+                    </div>
+                </td>
+                <td style="text-align: right; vertical-align: middle;" onclick="event.stopPropagation()">
+                    <div style="display: flex; gap: 0.35rem; justify-content: flex-end;">
+                        <button type="button" class="btn btn-sm btn-outline" onclick='openEditModal(${recordJsonEsc})'>✏️ Edit</button>
+                        <form method="post" action="index.php" onsubmit="return confirm('Delete record for ${escapeHtml(row.patient_name).replace(/'/g, "\\'")}?');" style="display:inline;">
+                            <input type="hidden" name="action" value="delete">
+                            <input type="hidden" name="record_id" value="${row.record_id}">
+                            <input type="hidden" name="record_date" value="${escapeHtml(row.record_date)}">
+                            <button type="submit" class="btn btn-danger btn-sm">🗑️</button>
+                        </form>
+                    </div>
+                </td>
+                <td style="vertical-align: middle;" onclick="event.stopPropagation()">
+                    <a href="patient-consultation.php?q=${encodeURIComponent(row.patient_name)}" class="btn btn-outline btn-sm patient-action-btn">Consultation</a>
+                </td>
+                <td style="text-align: center; vertical-align: middle;" onclick="event.stopPropagation()">
+                    <form method="post" action="index.php" style="display:inline;" class="pcu-toggle-form" onsubmit="return false;">
+                        <input type="hidden" name="action" value="toggle_pcu">
+                        <input type="hidden" name="ajax" value="1">
+                        <input type="hidden" name="patient_name" value="${escapeHtml(row.patient_name)}">
+                        <input type="hidden" name="record_date" value="${escapeHtml(row.record_date)}">
+                        <button type="button"
+                            class="btn btn-sm patient-action-btn ${pcuDone ? 'btn-primary' : 'btn-outline'}"
+                            data-pcu-done="${pcuDone ? '1' : '0'}"
+                            data-patient="${escapeHtml(row.patient_name)}"
+                            onclick="togglePCU(this); return false;">
+                            ${pcuDone ? '✓ PCU' : 'PCU'}
+                        </button>
+                    </form>
+                </td>
+                <td style="text-align: center; vertical-align: middle;" onclick="event.stopPropagation()">
+                    <button type="button" class="btn btn-outline btn-sm patient-action-btn" data-patient="${escapeHtml(row.patient_name)}" onclick="openPatientHistory(this.dataset.patient)">History</button>
+                </td>
+            </tr>
+        `;
+    });
+
+    tbody.innerHTML = html;
 }
 
 // Dynamic row count height control for the table container
@@ -1418,7 +1789,7 @@ document.addEventListener('DOMContentLoaded', () => {
             Edit Patient Record
             <button type="button" onclick="document.getElementById('editModal').style.display='none'" style="border:none; background:none; cursor:pointer; font-size: 1.5rem; color: var(--text-muted);">&times;</button>
         </div>
-        <form method="post" action="index.php" autocomplete="off">
+        <form method="post" action="index.php" autocomplete="off" onsubmit="return validatePatientRecordForm(this);">
             <input type="hidden" name="action" value="update">
             <input type="hidden" name="record_id" id="edit_record_id">
             <input type="hidden" name="record_date" value="<?= h($selected_date) ?>">
@@ -1445,15 +1816,15 @@ document.addEventListener('DOMContentLoaded', () => {
                         <select name="meds_type_id" id="edit_meds_type_id" style="width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border-color); border-radius: var(--radius-sm); outline:none;">
                             <option value="">-- None --</option>
                             <?php foreach ($meds_types_list as $mt): ?>
-                                <option value="<?= (int)$mt['meds_type_id'] ?>" <?= empty($mt['is_consultation']) ? 'data-is-fpe="1"' : '' ?>><?= h($mt['meds_type_name']) ?></option>
+                                <option value="<?= (int)$mt['meds_type_id'] ?>" <?= !empty($mt['is_consultation']) ? 'data-is-consultation="1"' : 'data-is-fpe="1"' ?>><?= h($mt['meds_type_name']) ?></option>
                             <?php endforeach; ?>
                         </select>
                     </div>
                 </div>
                 <div style="display: flex; gap: 1rem; border-top: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); padding: 0.75rem 0;">
-                    <label class="select-card-box"><input type="checkbox" name="has_meds" id="edit_has_meds" value="1" onchange="toggleBox(this, 'edit-meds-box')"> Meds</label>
-                    <label class="select-card-box"><input type="checkbox" name="has_gamot_meds" id="edit_has_gamot_meds" value="1" onchange="toggleBox(this, 'edit-gamot-box')"> Gamot</label>
-                    <label class="select-card-box"><input type="checkbox" name="has_labs" id="edit_has_labs" value="1" onchange="toggleBox(this, 'edit-labs-box')"> Labs</label>
+                    <label class="select-card-box"><input type="checkbox" name="has_meds" id="edit_has_meds" value="1" onchange="toggleBox(this, 'edit-meds-box'); syncConsultationRequirements(this.form)"> Meds</label>
+                    <label class="select-card-box"><input type="checkbox" name="has_gamot_meds" id="edit_has_gamot_meds" value="1" onchange="toggleBox(this, 'edit-gamot-box'); syncConsultationRequirements(this.form)"> Gamot</label>
+                    <label class="select-card-box"><input type="checkbox" name="has_labs" id="edit_has_labs" value="1" onchange="toggleBox(this, 'edit-labs-box'); syncConsultationRequirements(this.form)"> Labs</label>
                 </div>
                 
                 <!-- Edit Modal Standard Meds Selector -->
@@ -1540,6 +1911,107 @@ function toggleBox(checkbox, boxId) {
     const el = document.getElementById(boxId);
     if (el) el.style.display = checkbox.checked ? 'block' : 'none';
 }
+
+
+function formHasConsultationServices(form) {
+    if (!form) return false;
+    return ['has_meds', 'has_labs', 'has_gamot_meds'].some(function(name) {
+        const cb = form.querySelector('input[name="' + name + '"]');
+        return !!(cb && cb.checked);
+    });
+}
+
+function getConsultationOption(select) {
+    if (!select) return null;
+    return Array.from(select.options).find(function(option) {
+        return option.dataset && option.dataset.isConsultation === '1';
+    }) || Array.from(select.options).find(function(option) {
+        return option.textContent.trim().toLowerCase() === 'consultation';
+    });
+}
+
+function isConsultationSelection(select) {
+    const option = select && select.selectedOptions && select.selectedOptions[0];
+    return !!(option && (
+        option.dataset.isConsultation === '1' ||
+        option.textContent.trim().toLowerCase() === 'consultation'
+    ));
+}
+
+function syncConsultationRequirements(form) {
+    if (!form) return;
+
+    const medsType = form.querySelector('select[name="meds_type_id"]');
+    const physician = form.querySelector('select[name="physician_id"]');
+    if (!medsType || !physician) return;
+
+    const hasServices = formHasConsultationServices(form);
+
+    // Checking Meds, Labs, or Gamot automatically changes the visit to Consultation.
+    if (hasServices) {
+        const consultationOption = getConsultationOption(medsType);
+        if (consultationOption) {
+            medsType.value = consultationOption.value;
+            medsType.dataset.autoConsultation = '1';
+        }
+    } else if (medsType.dataset.autoConsultation === '1') {
+        // Once all service checkboxes are cleared, allow the user to choose the visit type again.
+        medsType.value = '';
+        delete medsType.dataset.autoConsultation;
+    }
+
+    const consultationSelected = hasServices || isConsultationSelection(medsType);
+    physician.required = consultationSelected;
+
+    const physicianLabel = form.querySelector('label[for="pc_physician"], label[for="edit_physician_id"]');
+    if (physicianLabel) {
+        physicianLabel.textContent = consultationSelected ? 'Physician *' : 'Physician';
+    }
+
+    // Clear visual warning once a physician has been selected.
+    physician.style.borderColor = consultationSelected && !physician.value ? '#ef4444' : '';
+}
+
+function validatePatientRecordForm(form) {
+    syncConsultationRequirements(form);
+
+    const medsType = form.querySelector('select[name="meds_type_id"]');
+    const physician = form.querySelector('select[name="physician_id"]');
+    const hasServices = formHasConsultationServices(form);
+    const isConsultation = hasServices || isConsultationSelection(medsType);
+
+    if (isConsultation && (!physician || !physician.value)) {
+        if (physician) {
+            physician.required = true;
+            physician.focus();
+        }
+        alert('A physician is required for a Consultation. Please select a physician before saving.');
+        return false;
+    }
+
+    return true;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('form[action="index.php"]').forEach(function(form) {
+        if (form.querySelector('input[name="action"][value="add"], input[name="action"][value="update"]')) {
+            syncConsultationRequirements(form);
+        }
+    });
+
+    document.querySelectorAll('select[name="meds_type_id"]').forEach(function(select) {
+        select.addEventListener('change', function() {
+            const form = select.form;
+            if (!form) return;
+            // If a service is checked, the visit must stay Consultation.
+            if (formHasConsultationServices(form)) {
+                const consultationOption = getConsultationOption(select);
+                if (consultationOption) select.value = consultationOption.value;
+            }
+            syncConsultationRequirements(form);
+        });
+    });
+});
 
 function closeSummaryModal(event) {
     if (event.target.id === 'summaryModal') document.getElementById('summaryModal').style.display = 'none';

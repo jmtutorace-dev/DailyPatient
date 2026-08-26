@@ -1,6 +1,9 @@
 <?php
 /**
  * YAKAP GAMOT SYSTEM - Physicians & Rates (physicians.php)
+ * 
+ * Redesigned for a minimal, professional healthcare aesthetic while preserving 
+ * all backend logic, database operations, form handling, and exports.
  */
 
 require_once 'config.php';
@@ -194,22 +197,36 @@ include 'includes/header.php';
 ?>
 
 <style>
-/* Modern Dashboard Layout Styling */
+/* Modern Healthcare Dashboard Design System */
 :root {
-    --primary: #2563eb;
-    --primary-hover: #1d4ed8;
+    --primary: #0f766e;          /* Clinical Teal */
+    --primary-hover: #115e59;
+    --primary-light: #f0fdfa;
+    --bg-main: #f8fafc;
     --bg-card: #ffffff;
     --border-subtle: #e2e8f0;
-    --text-primary: #0f172a;
+    --text-primary: #1e293b;
     --text-secondary: #64748b;
-    --success: #10b981;
-    --danger: #ef4444;
+    --success: #059669;
+    --danger: #dc2626;
+    --warning: #d97706;
+    --info: #0284c7;
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+}
+
+body {
+    background-color: var(--bg-main);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    -webkit-font-smoothing: antialiased;
 }
 
 .dashboard-container {
-    max-width: 1200px;
+    max-width: 1280px;
     margin: 0 auto;
-    padding: 0.5rem;
+    padding: 1.5rem 1rem;
 }
 
 /* Header Section */
@@ -217,15 +234,22 @@ include 'includes/header.php';
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 1.25rem;
-    flex-wrap: wrap;
+    margin-bottom: 1.5rem;
     gap: 1rem;
+    flex-wrap: wrap;
 }
 
-.header-bar h2 {
-    font-size: 1.5rem;
+.header-title-wrapper h2 {
+    font-size: 1.35rem;
     font-weight: 700;
     color: var(--text-primary);
+    margin: 0 0 0.25rem 0;
+    letter-spacing: -0.01em;
+}
+
+.header-title-wrapper p {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
     margin: 0;
 }
 
@@ -235,7 +259,54 @@ include 'includes/header.php';
     flex-wrap: wrap;
 }
 
-/* KPI Summary Cards */
+/* Modern Minimalist Buttons */
+.btn-custom {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 0.875rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    text-decoration: none;
+}
+
+.btn-custom:hover {
+    background: #f1f5f9;
+    border-color: #cbd5e1;
+    color: var(--text-primary);
+}
+
+.btn-custom.btn-primary-custom {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+}
+
+.btn-custom.btn-primary-custom:hover {
+    background: var(--primary-hover);
+    border-color: var(--primary-hover);
+    color: white;
+}
+
+.btn-custom.btn-danger-custom {
+    background: transparent;
+    color: var(--danger);
+    border-color: transparent;
+}
+
+.btn-custom.btn-danger-custom:hover {
+    background: #fef2f2;
+    border-color: #fecaca;
+    color: var(--danger);
+}
+
+/* KPI Summary Grid */
 .kpi-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -246,73 +317,125 @@ include 'includes/header.php';
 .kpi-card {
     background: var(--bg-card);
     border: 1px solid var(--border-subtle);
-    border-radius: 10px;
+    border-radius: var(--radius-md);
     padding: 1.25rem;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    box-shadow: var(--shadow-sm);
+    position: relative;
+    overflow: hidden;
 }
 
+.kpi-card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 4px;
+    height: 100%;
+    background: var(--border-subtle);
+}
+
+.kpi-card.accent-primary::before { background: var(--primary); }
+.kpi-card.accent-info::before { background: var(--info); }
+.kpi-card.accent-success::before { background: var(--success); }
+
 .kpi-card .kpi-title {
-    font-size: 0.8rem;
+    font-size: 0.75rem;
     font-weight: 600;
     text-transform: uppercase;
     color: var(--text-secondary);
-    letter-spacing: 0.03em;
+    letter-spacing: 0.04em;
 }
 
 .kpi-card .kpi-value {
-    font-size: 1.6rem;
+    font-size: 1.625rem;
     font-weight: 700;
     color: var(--text-primary);
-    margin-top: 0.25rem;
+    margin-top: 0.35rem;
+    line-height: 1;
 }
 
 /* Card Sections */
 .card-panel {
     background: var(--bg-card);
     border: 1px solid var(--border-subtle);
-    border-radius: 10px;
+    border-radius: var(--radius-md);
     padding: 1.25rem;
     margin-bottom: 1.5rem;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+    box-shadow: var(--shadow-sm);
 }
 
-.card-panel h3 {
-    font-size: 1.15rem;
-    font-weight: 700;
-    color: var(--text-primary);
-    margin-top: 0;
-    margin-bottom: 1rem;
+.section-heading {
     display: flex;
-    align-items: center;
-    gap: 0.5rem;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.section-heading h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 0.2rem 0;
+}
+
+.section-help {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+}
+
+.section-count {
+    background: #f1f5f9;
+    color: var(--text-secondary);
+    padding: 0.2rem 0.6rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
 }
 
 /* Modern Tables */
+.table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+}
+
 .modern-table {
     width: 100%;
     border-collapse: collapse;
     font-size: 0.875rem;
+    text-align: left;
+    white-space: nowrap;
 }
 
 .modern-table th {
     background: #f8fafc;
-    padding: 0.75rem;
-    text-align: left;
+    padding: 0.75rem 1rem;
     color: var(--text-secondary);
     font-weight: 600;
     border-bottom: 1px solid var(--border-subtle);
 }
 
 .modern-table td {
-    padding: 0.75rem;
+    padding: 0.875rem 1rem;
     border-bottom: 1px solid var(--border-subtle);
     color: var(--text-primary);
     vertical-align: middle;
 }
 
+.modern-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.modern-table tbody tr:hover {
+    background-color: #f8fafc;
+}
+
 .add-new-row td {
     background: #f8fafc;
-    border-top: 2px solid var(--border-subtle);
+    border-top: 1px solid var(--border-subtle);
 }
 
 /* Inputs & Forms */
@@ -320,77 +443,99 @@ include 'includes/header.php';
     width: 100%;
     padding: 0.4rem 0.6rem;
     border: 1px solid var(--border-subtle);
-    border-radius: 6px;
-    font-size: 0.875rem;
+    border-radius: var(--radius-sm);
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    background-color: #ffffff;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.modern-input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.1);
 }
 
 .checkbox-custom {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
     cursor: pointer;
     accent-color: var(--primary);
 }
 
-/* Status Badges */
+.check-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--text-primary);
+}
+
+/* Row Actions & Status Badges */
+.row-actions {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.row-actions form {
+    margin: 0;
+}
+
 .status-pill {
-    display: inline-block;
-    padding: 0.2rem 0.55rem;
-    border-radius: 12px;
-    font-size: 0.75rem;
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.6rem;
+    border-radius: 9999px;
+    font-size: 0.7rem;
     font-weight: 600;
+    letter-spacing: 0.02em;
 }
 
 .status-pill.active { background: #d1fae5; color: #065f46; }
 .status-pill.inactive { background: #fee2e2; color: #991b1b; }
 
 @media print {
-    .header-actions, .add-new-row, .btn-save { display: none !important; }
+    .header-bar, .add-new-row, .row-actions button, .btn-save { display: none !important; }
+    .card-panel { border: none; box-shadow: none; padding: 0; }
 }
 
-.section-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:14px}
-.section-heading h3{margin:0 0 4px}
-.section-help{margin:0;color:var(--text-secondary);font-size:.78rem}
-.section-count{background:#f1f5f9;color:#475569;padding:5px 9px;border-radius:999px;font-size:.72rem;font-weight:750;white-space:nowrap}
-.table-wrap{overflow-x:auto;border:1px solid var(--border-subtle);border-radius:9px}
-.modern-table{min-width:720px}
-.row-actions{display:flex;justify-content:flex-end;align-items:center;gap:6px}
-.row-actions form{margin:0}
-.check-label{display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:.82rem}
-.modern-input:focus{border-color:#60a5fa;box-shadow:0 0 0 3px rgba(37,99,235,.10);outline:none}
-.add-new-row td{background:#f8fafc}
-.btn-danger{background:#ef4444!important;border-color:#ef4444!important;color:#fff!important}
-.btn-danger:hover{background:#dc2626!important}
-@media(max-width:700px){
-    .dashboard-container{padding:.25rem}
-    .header-actions{width:100%}
-    .header-actions .btn{flex:1}
-    .section-heading{flex-direction:column}
-    .row-actions{justify-content:flex-start}
+@media (max-width: 700px) {
+    .dashboard-container { padding: 0.5rem; }
+    .header-actions { width: 100%; }
+    .header-actions .btn-custom { flex: 1; justify-content: center; }
+    .section-heading { flex-direction: column; }
+    .row-actions { justify-content: flex-start; }
 }
 </style>
 
 <div class="dashboard-container">
     <!-- Header -->
     <header class="header-bar">
-        <h2>🩺 Physicians, Rates &amp; System Settings</h2>
+        <div class="header-title-wrapper">
+            <h2>Physicians, Rates & System Settings</h2>
+            <p>Manage clinical profiles, consultation rates, medication categories, and registered operational staff.</p>
+        </div>
         <div class="header-actions">
-            <a href="?export=physicians_csv" class="btn btn-blue btn-sm">📥 Physicians CSV</a>
-            <a href="?export=meds_types_csv" class="btn btn-sm" style="background:#e2e8f0; color:#334155;">📥 Meds Types CSV</a>
-            <a href="?export=staff_csv" class="btn btn-sm btn-outline">📥 Staff CSV</a>
+            <a href="?export=physicians_csv" class="btn-custom"><span>📥</span> Physicians CSV</a>
+            <a href="?export=meds_types_csv" class="btn-custom"><span>📥</span> Meds Types CSV</a>
+            <a href="?export=staff_csv" class="btn-custom"><span>📥</span> Staff CSV</a>
         </div>
     </header>
 
     <!-- KPI Summary Grid -->
     <section class="kpi-grid">
-        <div class="kpi-card">
+        <div class="kpi-card accent-primary">
             <div class="kpi-title">Active Physicians</div>
-            <div class="kpi-value" style="color: var(--primary);"><?= $active_physicians ?> / <?= $total_physicians ?></div>
+            <div class="kpi-value"><?= $active_physicians ?> <span style="font-size: 1rem; color: var(--text-secondary); font-weight: 500;">/ <?= $total_physicians ?></span></div>
         </div>
-        <div class="kpi-card">
+        <div class="kpi-card accent-info">
             <div class="kpi-title">Medication Types</div>
             <div class="kpi-value"><?= $total_meds_types ?></div>
         </div>
-        <div class="kpi-card">
+        <div class="kpi-card accent-success">
             <div class="kpi-title">Registered Staff</div>
             <div class="kpi-value"><?= $total_staff ?></div>
         </div>
@@ -398,54 +543,59 @@ include 'includes/header.php';
 
     <!-- SECTION 1: PHYSICIANS TABLE -->
     <section class="card-panel">
-        <h3>👨‍⚕️ Physicians &amp; Consultation Rates</h3>
-        <div style="overflow-x: auto;">
-            
-                <table class="modern-table">
-                    <thead>
-                        <tr>
-                            <th style="width: 40%;">Physician Name</th>
-                            <th style="width: 25%;">Consultation Rate (₱)</th>
-                            <th style="width: 15%; text-align: center;">Active Status</th>
-                            <th style="width: 20%; text-align: right;">Action</th>
-                        </tr>
-                    </thead>
-<tbody>
-                        <?php foreach ($physicians_list as $p): ?>
-                            <tr>
-                                <td>
-                                    <input type="text" name="physician_name" class="modern-input" value="<?= h($p['physician_name']) ?>" form="update-physician-<?= (int)$p['physician_id'] ?>" required>
-                                </td>
-                                <td>
-                                    <input type="number" step="0.01" min="0" name="consultation_rate" class="modern-input" value="<?= h($p['consultation_rate']) ?>" form="update-physician-<?= (int)$p['physician_id'] ?>" style="max-width: 150px;">
-                                </td>
-                                <td style="text-align: center;">
-                                    <input type="checkbox" name="is_active" value="1" class="checkbox-custom" form="update-physician-<?= (int)$p['physician_id'] ?>" <?= $p['is_active'] ? 'checked' : '' ?>>
-                                </td>
-                                <td style="text-align: right;">
-                                    <button type="submit" class="btn btn-primary btn-sm btn-save" form="update-physician-<?= (int)$p['physician_id'] ?>">Save Changes</button>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
+        <div class="section-heading">
+            <div>
+                <h3>Physicians & Consultation Rates</h3>
+                <p class="section-help">Configure medical practitioners and their corresponding consultation service rates.</p>
+            </div>
+            <span class="section-count"><?= $total_physicians ?> registered</span>
+        </div>
 
-                        <!-- Add New Physician Row -->
-                        <tr class="add-new-row">
+        <div class="table-wrap">
+            <table class="modern-table">
+                <thead>
+                    <tr>
+                        <th style="width: 38%;">Physician Name</th>
+                        <th style="width: 25%;">Consultation Rate (₱)</th>
+                        <th style="width: 17%; text-align: center;">Active Status</th>
+                        <th style="width: 20%; text-align: right;">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($physicians_list as $p): ?>
+                        <tr>
                             <td>
-                                <input type="text" name="physician_name" class="modern-input" placeholder="+ Add new physician name" form="add-physician" required>
+                                <input type="text" name="physician_name" class="modern-input" value="<?= h($p['physician_name']) ?>" form="update-physician-<?= (int)$p['physician_id'] ?>" required>
                             </td>
                             <td>
-                                <input type="number" step="0.01" min="0" name="consultation_rate" class="modern-input" value="0.00" form="add-physician" style="max-width: 150px;">
+                                <input type="number" step="0.01" min="0" name="consultation_rate" class="modern-input" value="<?= h($p['consultation_rate']) ?>" form="update-physician-<?= (int)$p['physician_id'] ?>" style="max-width: 160px;">
                             </td>
                             <td style="text-align: center;">
-                                <input type="checkbox" name="is_active" value="1" class="checkbox-custom" form="add-physician" checked>
+                                <input type="checkbox" name="is_active" value="1" class="checkbox-custom" form="update-physician-<?= (int)$p['physician_id'] ?>" <?= $p['is_active'] ? 'checked' : '' ?>>
                             </td>
                             <td style="text-align: right;">
-                                <button type="submit" class="btn btn-accent btn-sm" form="add-physician">➕ Add Physician</button>
+                                <button type="submit" class="btn-custom btn-primary-custom btn-save" style="padding: 0.3rem 0.7rem; font-size: 0.8rem;" form="update-physician-<?= (int)$p['physician_id'] ?>">Save</button>
                             </td>
                         </tr>
-                    </tbody>
-                </table>
-            
+                    <?php endforeach; ?>
+
+                    <!-- Add New Physician Row -->
+                    <tr class="add-new-row">
+                        <td>
+                            <input type="text" name="physician_name" class="modern-input" placeholder="Enter new physician name" form="add-physician" required>
+                        </td>
+                        <td>
+                            <input type="number" step="0.01" min="0" name="consultation_rate" class="modern-input" value="0.00" form="add-physician" style="max-width: 160px;">
+                        </td>
+                        <td style="text-align: center;">
+                            <input type="checkbox" name="is_active" value="1" class="checkbox-custom" form="add-physician" checked>
+                        </td>
+                        <td style="text-align: right;">
+                            <button type="submit" class="btn-custom btn-primary-custom" style="padding: 0.3rem 0.7rem; font-size: 0.8rem;" form="add-physician">➕ Add Physician</button>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
         </div>
     </section>
 
@@ -453,8 +603,8 @@ include 'includes/header.php';
     <section class="card-panel">
         <div class="section-heading">
             <div>
-                <h3>💊 Medication / Visit Types</h3>
-                <p class="section-help">These types are used by the Daily Log to classify visits. You can edit them here.</p>
+                <h3>Medication / Visit Types</h3>
+                <p class="section-help">Categories used by the Daily Log to classify clinical visits and consultation requirements.</p>
             </div>
             <span class="section-count"><?= $total_meds_types ?> type(s)</span>
         </div>
@@ -464,8 +614,8 @@ include 'includes/header.php';
                 <thead>
                     <tr>
                         <th>Medication / Visit Type</th>
-                        <th style="width:28%">Counts as Consultation</th>
-                        <th style="width:22%;text-align:right">Actions</th>
+                        <th style="width: 35%;">Counts as Consultation</th>
+                        <th style="width: 20%; text-align: right;">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -490,11 +640,11 @@ include 'includes/header.php';
                         </td>
                         <td>
                             <div class="row-actions">
-                                <button type="submit" class="btn btn-primary btn-sm" form="meds-edit-<?= (int)$m['meds_type_id'] ?>">💾 Save</button>
+                                <button type="submit" class="btn-custom btn-primary-custom" style="padding: 0.3rem 0.7rem; font-size: 0.8rem;" form="meds-edit-<?= (int)$m['meds_type_id'] ?>">Save</button>
                                 <form method="post" action="physicians.php" onsubmit="return confirm('Delete this medication/visit type? This may fail if existing records use it.');">
                                     <input type="hidden" name="action" value="delete_meds_type">
                                     <input type="hidden" name="meds_type_id" value="<?= (int)$m['meds_type_id'] ?>">
-                                    <button type="submit" class="btn btn-danger btn-sm">🗑️</button>
+                                    <button type="submit" class="btn-custom btn-danger-custom" style="padding: 0.3rem 0.5rem; font-size: 0.8rem;" title="Delete">🗑️</button>
                                 </form>
                             </div>
                         </td>
@@ -518,7 +668,9 @@ include 'includes/header.php';
                             </label>
                         </td>
                         <td>
-                            <button type="submit" class="btn btn-accent btn-sm" form="add-meds-type">➕ Add Type</button>
+                            <div class="row-actions">
+                                <button type="submit" class="btn-custom btn-primary-custom" style="padding: 0.3rem 0.7rem; font-size: 0.8rem;" form="add-meds-type">➕ Add Type</button>
+                            </div>
                         </td>
                     </tr>
                 </tbody>
@@ -530,8 +682,8 @@ include 'includes/header.php';
     <section class="card-panel">
         <div class="section-heading">
             <div>
-                <h3>👥 Staff Members</h3>
-                <p class="section-help">Manage staff names used for transmitted-by and related workflows.</p>
+                <h3>Staff Members</h3>
+                <p class="section-help">Manage personnel names used for transmittal tracking and operational workflows.</p>
             </div>
             <span class="section-count"><?= $total_staff ?> staff</span>
         </div>
@@ -541,8 +693,8 @@ include 'includes/header.php';
                 <thead>
                     <tr>
                         <th>Staff Name</th>
-                        <th style="width:28%">Status</th>
-                        <th style="width:22%;text-align:right">Actions</th>
+                        <th style="width: 35%;">Status</th>
+                        <th style="width: 20%; text-align: right;">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -569,11 +721,11 @@ include 'includes/header.php';
                         </td>
                         <td>
                             <div class="row-actions">
-                                <button type="submit" class="btn btn-primary btn-sm" form="staff-edit-<?= (int)$s['staff_id'] ?>">💾 Save</button>
+                                <button type="submit" class="btn-custom btn-primary-custom" style="padding: 0.3rem 0.7rem; font-size: 0.8rem;" form="staff-edit-<?= (int)$s['staff_id'] ?>">Save</button>
                                 <form method="post" action="physicians.php" onsubmit="return confirm('Delete this staff member?');">
                                     <input type="hidden" name="action" value="delete_staff">
                                     <input type="hidden" name="staff_id" value="<?= (int)$s['staff_id'] ?>">
-                                    <button type="submit" class="btn btn-danger btn-sm">🗑️</button>
+                                    <button type="submit" class="btn-custom btn-danger-custom" style="padding: 0.3rem 0.5rem; font-size: 0.8rem;" title="Delete">🗑️</button>
                                 </form>
                             </div>
                         </td>
@@ -596,7 +748,9 @@ include 'includes/header.php';
                             </label>
                         </td>
                         <td>
-                            <button type="submit" class="btn btn-accent btn-sm" form="add-staff">➕ Add Staff</button>
+                            <div class="row-actions">
+                                <button type="submit" class="btn-custom btn-primary-custom" style="padding: 0.3rem 0.7rem; font-size: 0.8rem;" form="add-staff">➕ Add Staff</button>
+                            </div>
                         </td>
                     </tr>
                 </tbody>
@@ -606,7 +760,7 @@ include 'includes/header.php';
 </div>
 
 <?php
-// Physician forms are kept outside the table and connected to their row inputs using form="...".
+// Hidden forms for adding and updating records outside tables
 ?>
 <form id="add-physician" method="post" action="physicians.php" style="display:none;">
     <input type="hidden" name="action" value="add_physician">

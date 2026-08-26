@@ -1,6 +1,9 @@
 <?php
 /**
  * YAKAP GAMOT SYSTEM - Transmit Tracker (transmit.php)
+ * 
+ * Redesigned for a minimal, professional healthcare aesthetic while preserving 
+ * all backend logic, database operations, form handling, and batch actions.
  */
 
 require_once 'config.php';
@@ -139,54 +142,105 @@ include 'includes/header.php';
 ?>
 
 <style>
-/* Modern Dashboard Layout Styling */
+/* Modern Healthcare Dashboard Design System */
 :root {
-    --primary: #2563eb;
-    --primary-hover: #1d4ed8;
+    --primary: #0f766e;          /* Clinical Teal */
+    --primary-hover: #115e59;
+    --primary-light: #f0fdfa;
+    --bg-main: #f8fafc;
     --bg-card: #ffffff;
     --border-subtle: #e2e8f0;
-    --text-primary: #0f172a;
+    --text-primary: #1e293b;
     --text-secondary: #64748b;
-    --success: #10b981;
-    --warning: #f59e0b;
+    --success: #059669;
+    --danger: #dc2626;
+    --warning: #d97706;
+    --info: #0284c7;
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+}
+
+body {
+    background-color: var(--bg-main);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    -webkit-font-smoothing: antialiased;
 }
 
 .dashboard-container {
-    max-width: 1200px;
+    max-width: 1280px;
     margin: 0 auto;
-    padding: 0.5rem;
+    padding: 1.5rem 1rem;
 }
 
-/* Page Header Controls */
+/* Header Bar */
 .header-bar {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 1.25rem;
-    flex-wrap: wrap;
+    margin-bottom: 1.5rem;
     gap: 1rem;
+    flex-wrap: wrap;
 }
 
-.header-bar h2 {
-    font-size: 1.5rem;
+.header-title-wrapper h2 {
+    font-size: 1.35rem;
     font-weight: 700;
     color: var(--text-primary);
+    margin: 0 0 0.25rem 0;
+    letter-spacing: -0.01em;
+}
+
+.header-title-wrapper p {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
     margin: 0;
 }
 
-.header-actions {
-    display: flex;
-    gap: 0.5rem;
+/* Modern Minimalist Buttons */
+.btn-custom {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 0.875rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    text-decoration: none;
 }
 
-/* Control Bar (Year Filter & Batch Buttons) */
+.btn-custom:hover {
+    background: #f1f5f9;
+    border-color: #cbd5e1;
+    color: var(--text-primary);
+}
+
+.btn-custom.btn-primary-custom {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+}
+
+.btn-custom.btn-primary-custom:hover {
+    background: var(--primary-hover);
+    border-color: var(--primary-hover);
+    color: white;
+}
+
+/* Control Card & Year Selector */
 .control-card {
     background: var(--bg-card);
     border: 1px solid var(--border-subtle);
-    border-radius: 10px;
-    padding: 1rem 1.25rem;
+    border-radius: var(--radius-md);
+    padding: 1.25rem;
     margin-bottom: 1.5rem;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+    box-shadow: var(--shadow-sm);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -197,32 +251,40 @@ include 'includes/header.php';
 .year-selector {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.75rem;
 }
 
 .year-selector label {
-    font-size: 0.875rem;
+    font-size: 0.85rem;
     font-weight: 600;
     color: var(--text-secondary);
 }
 
 .year-selector select {
-    padding: 0.4rem 0.75rem;
+    padding: 0.5rem 0.875rem;
     border: 1px solid var(--border-subtle);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     font-size: 0.875rem;
     font-weight: 600;
     color: var(--text-primary);
-    background-color: #fff;
+    background-color: #ffffff;
     cursor: pointer;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.year-selector select:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.1);
 }
 
 .batch-actions {
     display: flex;
     gap: 0.5rem;
+    flex-wrap: wrap;
 }
 
-/* KPI Cards */
+/* KPI Summary Grid */
 .kpi-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -233,109 +295,167 @@ include 'includes/header.php';
 .kpi-card {
     background: var(--bg-card);
     border: 1px solid var(--border-subtle);
-    border-radius: 10px;
+    border-radius: var(--radius-md);
     padding: 1.25rem;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    box-shadow: var(--shadow-sm);
+    position: relative;
+    overflow: hidden;
 }
 
+.kpi-card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 4px;
+    height: 100%;
+    background: var(--border-subtle);
+}
+
+.kpi-card.accent-success::before { background: var(--success); }
+.kpi-card.accent-primary::before { background: var(--primary); }
+.kpi-card.accent-info::before { background: var(--info); }
+.kpi-card.accent-warning::before { background: var(--warning); }
+
 .kpi-card .kpi-title {
-    font-size: 0.8rem;
+    font-size: 0.75rem;
     font-weight: 600;
     text-transform: uppercase;
     color: var(--text-secondary);
-    letter-spacing: 0.03em;
+    letter-spacing: 0.04em;
 }
 
 .kpi-card .kpi-value {
-    font-size: 1.6rem;
+    font-size: 1.625rem;
     font-weight: 700;
     color: var(--text-primary);
-    margin-top: 0.25rem;
+    margin-top: 0.35rem;
+    line-height: 1;
 }
 
-/* Data Table */
+/* Card Panels */
 .card-panel {
     background: var(--bg-card);
     border: 1px solid var(--border-subtle);
-    border-radius: 10px;
+    border-radius: var(--radius-md);
     padding: 1.25rem;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+    margin-bottom: 1.5rem;
+    box-shadow: var(--shadow-sm);
+}
+
+.card-panel h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-top: 0;
+    margin-bottom: 1rem;
+}
+
+/* Modern Data Table Styling */
+.table-wrapper {
+    overflow-x: auto;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
 }
 
 .modern-table {
     width: 100%;
     border-collapse: collapse;
     font-size: 0.875rem;
+    text-align: left;
+    white-space: nowrap;
 }
 
 .modern-table th {
     background: #f8fafc;
-    padding: 0.75rem;
-    text-align: left;
+    padding: 0.75rem 1rem;
     color: var(--text-secondary);
     font-weight: 600;
     border-bottom: 1px solid var(--border-subtle);
 }
 
 .modern-table td {
-    padding: 0.75rem;
+    padding: 0.875rem 1rem;
     border-bottom: 1px solid var(--border-subtle);
     color: var(--text-primary);
     vertical-align: middle;
 }
 
+.modern-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.modern-table tbody tr:hover {
+    background-color: #f8fafc;
+}
+
 .modern-table tfoot td {
     background: #f8fafc;
-    font-weight: 700;
-    border-top: 2px solid var(--border-subtle);
+    font-weight: 600;
+    border-top: 1px solid var(--border-subtle);
+    color: var(--text-primary);
 }
 
 /* Status Badges */
 .status-pill {
-    display: inline-block;
-    padding: 0.2rem 0.5rem;
-    border-radius: 12px;
-    font-size: 0.75rem;
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.6rem;
+    border-radius: 9999px;
+    font-size: 0.7rem;
     font-weight: 600;
+    letter-spacing: 0.02em;
 }
 
 .status-pill.complete { background: #d1fae5; color: #065f46; }
 .status-pill.partial { background: #fef3c7; color: #92400e; }
-.status-pill.pending { background: #f1f5f9; color: #64748b; }
+.status-pill.pending { background: #f1f5f9; color: #64748b; border: 1px solid #cbd5e1; }
 
 .modern-select {
     width: 100%;
-    padding: 0.4rem 0.5rem;
+    padding: 0.4rem 0.6rem;
     border: 1px solid var(--border-subtle);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     font-size: 0.85rem;
+    color: var(--text-primary);
+    background-color: #ffffff;
+    outline: none;
+    transition: border-color 0.15s ease;
+}
+
+.modern-select:focus {
+    border-color: var(--primary);
 }
 
 .checkbox-custom {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
     cursor: pointer;
     accent-color: var(--primary);
 }
 
 @media print {
-    .header-actions, .control-card, .btn-save { display: none !important; }
+    .header-bar, .control-card, .btn-save { display: none !important; }
+    .card-panel { border: none; box-shadow: none; padding: 0; }
 }
 </style>
 
 <div class="dashboard-container">
     <!-- Header -->
     <header class="header-bar">
-        <h2>📡 Transmit Tracker (<?= $selected_year ?>)</h2>
+        <div class="header-title-wrapper">
+            <h2>Transmit Tracker</h2>
+            <p>Monitor and manage annual PCSF and SAP report transmittal schedules for <?= $selected_year ?>.</p>
+        </div>
         <div class="header-actions">
-            <a href="?year=<?= $selected_year ?>&export=csv" class="btn btn-blue btn-sm">📥 Export CSV</a>
+            <a href="?year=<?= $selected_year ?>&export=csv" class="btn-custom"><span>📥</span> Export CSV</a>
         </div>
     </header>
 
     <!-- Controls (Year Selector & Batch Updates) -->
     <section class="control-card">
         <form class="year-selector" method="get" action="transmit.php">
-            <label for="year">Select Tracker Year:</label>
+            <label for="year">Tracker Year</label>
             <select name="year" id="year" onchange="this.form.submit()">
                 <?php for ($y = $min_year; $y <= $max_year; $y++): ?>
                     <option value="<?= $y ?>" <?= $y === $selected_year ? 'selected' : '' ?>><?= $y ?></option>
@@ -347,39 +467,40 @@ include 'includes/header.php';
             <form method="post" action="transmit.php" onsubmit="return confirm('Mark ALL months as PCSF transmitted for <?= $selected_year ?>?');">
                 <input type="hidden" name="action" value="mark_all_pcsf">
                 <input type="hidden" name="year" value="<?= $selected_year ?>">
-                <button type="submit" class="btn btn-primary btn-sm">✅ Mark All PCSF</button>
+                <button type="submit" class="btn-custom btn-primary-custom">✅ Mark All PCSF</button>
             </form>
             <form method="post" action="transmit.php" onsubmit="return confirm('Mark ALL months as SAP transmitted for <?= $selected_year ?>?');">
                 <input type="hidden" name="action" value="mark_all_sap">
                 <input type="hidden" name="year" value="<?= $selected_year ?>">
-                <button type="submit" class="btn btn-blue btn-sm">✅ Mark All SAP</button>
+                <button type="submit" class="btn-custom">✅ Mark All SAP</button>
             </form>
         </div>
     </section>
 
     <!-- KPI Summary Dashboard -->
     <section class="kpi-grid">
-        <div class="kpi-card">
+        <div class="kpi-card accent-success">
             <div class="kpi-title">Fully Completed Months</div>
-            <div class="kpi-value" style="color: var(--success);"><?= $total_transmitted ?> / 12</div>
+            <div class="kpi-value"><?= $total_transmitted ?> <span style="font-size: 1rem; color: var(--text-secondary); font-weight: 500;">/ 12</span></div>
         </div>
-        <div class="kpi-card">
+        <div class="kpi-card accent-primary">
             <div class="kpi-title">PCSF Transmitted</div>
-            <div class="kpi-value" style="color: var(--primary);"><?= $total_pcsf ?> / 12</div>
+            <div class="kpi-value"><?= $total_pcsf ?> <span style="font-size: 1rem; color: var(--text-secondary); font-weight: 500;">/ 12</span></div>
         </div>
-        <div class="kpi-card">
+        <div class="kpi-card accent-info">
             <div class="kpi-title">SAP Transmitted</div>
-            <div class="kpi-value" style="color: #0284c7;"><?= $total_sap ?> / 12</div>
+            <div class="kpi-value"><?= $total_sap ?> <span style="font-size: 1rem; color: var(--text-secondary); font-weight: 500;">/ 12</span></div>
         </div>
-        <div class="kpi-card">
+        <div class="kpi-card accent-warning">
             <div class="kpi-title">Pending Completion</div>
-            <div class="kpi-value" style="color: var(--warning);"><?= 12 - $total_transmitted ?> Months</div>
+            <div class="kpi-value"><?= 12 - $total_transmitted ?> <span style="font-size: 1rem; color: var(--text-secondary); font-weight: 500;">Months</span></div>
         </div>
     </section>
 
-    <!-- Main Data Table -->
+    <!-- Main Data Table Panel -->
     <section class="card-panel">
-        <div style="overflow-x: auto;">
+        <h3>Transmittal Records for <?= $selected_year ?></h3>
+        <div class="table-wrapper">
             <table class="modern-table">
                 <thead>
                     <tr>
@@ -387,13 +508,13 @@ include 'includes/header.php';
                         <th style="width: 10%; text-align: center;">PCSF</th>
                         <th style="width: 10%; text-align: center;">SAP</th>
                         <th style="width: 15%; text-align: center;">Status</th>
-                        <th style="width: 20%;">Transmitted By</th>
-                        <th style="width: 20%;">Transmitted At</th>
+                        <th style="width: 22%;">Transmitted By</th>
+                        <th style="width: 18%;">Transmitted At</th>
                         <th style="width: 10%; text-align: right;">Action</th>
                     </tr>
                 </thead>
                 <tbody>
-<?php for ($m = 1; $m <= 12; $m++):
+                    <?php for ($m = 1; $m <= 12; $m++):
                         $log_data           = $logs_by_month[$m] ?? null;
                         $pcsf_checked       = ($log_data && (int)$log_data['pcsf'] === 1);
                         $sap_checked        = ($log_data && (int)$log_data['sap'] === 1);
@@ -444,7 +565,7 @@ include 'includes/header.php';
                             </td>
 
                             <td style="text-align: right;">
-                                <button type="submit" class="btn btn-primary btn-sm btn-save" form="<?= $row_form_id ?>">Save</button>
+                                <button type="submit" class="btn-custom btn-primary-custom btn-save" style="padding: 0.3rem 0.7rem; font-size: 0.8rem;" form="<?= $row_form_id ?>">Save</button>
                             </td>
                         </tr>
                     <?php endfor; ?>
@@ -453,14 +574,14 @@ include 'includes/header.php';
                     <tr>
                         <td>YEAR TOTALS</td>
                         <td style="text-align: center; color: var(--primary);"><?= $total_pcsf ?> / 12</td>
-                        <td style="text-align: center; color: #0284c7;"><?= $total_sap ?> / 12</td>
+                        <td style="text-align: center; color: var(--info);"><?= $total_sap ?> / 12</td>
                         <td style="text-align: center; color: var(--success);"><?= $total_transmitted ?> Complete</td>
                         <td colspan="3"></td>
                     </tr>
                 </tfoot>
             </table>
         </div>
-</section>
+    </section>
 </div>
 
 <?php
