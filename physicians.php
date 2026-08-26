@@ -28,74 +28,148 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
     if ($action === 'add_physician') {
-        $physician_name    = trim($_POST['physician_name'] ?? '');
-        $consultation_rate = (float)($_POST['consultation_rate'] ?? 0);
-        $is_active         = isset($_POST['is_active']) ? 1 : 0;
+        $physician_name = normalize_patient_name($_POST['physician_name'] ?? '');
+        $consultation_rate = sanitize_decimal($_POST['consultation_rate'] ?? 0, 0.0, 1000000.0);
+        $is_active = isset($_POST['is_active']) ? 1 : 0;
 
-        if (!empty($physician_name)) {
+        if ($physician_name === '') {
+            set_flash('Physician name is required.', 'error');
+        } elseif (record_exists($conn, 'physicians', 'physician_name', $physician_name)) {
+            set_flash('A physician with that name already exists.', 'error');
+        } else {
             $stmt = $conn->prepare("INSERT INTO physicians (physician_name, consultation_rate, is_active) VALUES (?, ?, ?)");
             $stmt->bind_param("sdi", $physician_name, $consultation_rate, $is_active);
             if ($stmt->execute()) {
                 redirect_with_msg('physicians.php', 'Physician added successfully.');
             } else {
-                $msg = 'Error: ' . $stmt->error;
+                set_flash('Error adding physician: ' . $stmt->error, 'error');
             }
             $stmt->close();
-        } else {
-            set_flash('Physician name is required.', 'error');
         }
 
     } elseif ($action === 'update_physician') {
-        $physician_id      = (int)($_POST['physician_id'] ?? 0);
-        $physician_name    = trim($_POST['physician_name'] ?? '');
-        $consultation_rate = (float)($_POST['consultation_rate'] ?? 0);
-        $is_active         = isset($_POST['is_active']) ? 1 : 0;
+        $physician_id = (int)($_POST['physician_id'] ?? 0);
+        $physician_name = normalize_patient_name($_POST['physician_name'] ?? '');
+        $consultation_rate = sanitize_decimal($_POST['consultation_rate'] ?? 0, 0.0, 1000000.0);
+        $is_active = isset($_POST['is_active']) ? 1 : 0;
 
-        if ($physician_id > 0 && !empty($physician_name)) {
+        if ($physician_id <= 0 || $physician_name === '') {
+            set_flash('Invalid physician update request.', 'error');
+        } elseif (record_exists($conn, 'physicians', 'physician_name', $physician_name, 'physician_id', $physician_id)) {
+            set_flash('Another physician already uses that name.', 'error');
+        } else {
             $stmt = $conn->prepare("UPDATE physicians SET physician_name = ?, consultation_rate = ?, is_active = ? WHERE physician_id = ?");
             $stmt->bind_param("sdii", $physician_name, $consultation_rate, $is_active, $physician_id);
             if ($stmt->execute()) {
                 redirect_with_msg('physicians.php', 'Physician updated successfully.');
             } else {
-                $msg = 'Error: ' . $stmt->error;
+                set_flash('Error updating physician: ' . $stmt->error, 'error');
             }
             $stmt->close();
-        } else {
-            set_flash('Invalid update request.', 'error');
         }
 
     } elseif ($action === 'add_meds_type') {
-        $meds_type_name  = trim($_POST['meds_type_name'] ?? '');
+        $meds_type_name = trim($_POST['meds_type_name'] ?? '');
         $is_consultation = isset($_POST['is_consultation']) ? 1 : 0;
 
-        if (!empty($meds_type_name)) {
+        if ($meds_type_name === '') {
+            set_flash('Meds type name is required.', 'error');
+        } elseif (record_exists($conn, 'meds_types', 'meds_type_name', $meds_type_name)) {
+            set_flash('A medication type with that name already exists.', 'error');
+        } else {
             $stmt = $conn->prepare("INSERT INTO meds_types (meds_type_name, is_consultation) VALUES (?, ?)");
             $stmt->bind_param("si", $meds_type_name, $is_consultation);
             if ($stmt->execute()) {
-                redirect_with_msg('physicians.php', 'Meds type added successfully.');
+                redirect_with_msg('physicians.php', 'Medication type added successfully.');
             } else {
-                $msg = 'Error: ' . $stmt->error;
+                set_flash('Error adding medication type: ' . $stmt->error, 'error');
             }
             $stmt->close();
-        } else {
-            set_flash('Meds type name is required.', 'error');
         }
 
     } elseif ($action === 'add_staff') {
-        $staff_name = trim($_POST['staff_name'] ?? '');
-        $is_active  = isset($_POST['is_active']) ? 1 : 0;
+        $staff_name = normalize_patient_name($_POST['staff_name'] ?? '');
+        $is_active = isset($_POST['is_active']) ? 1 : 0;
 
-        if (!empty($staff_name)) {
+        if ($staff_name === '') {
+            set_flash('Staff name is required.', 'error');
+        } elseif (record_exists($conn, 'staff', 'staff_name', $staff_name)) {
+            set_flash('A staff member with that name already exists.', 'error');
+        } else {
             $stmt = $conn->prepare("INSERT INTO staff (staff_name, is_active) VALUES (?, ?)");
             $stmt->bind_param("si", $staff_name, $is_active);
             if ($stmt->execute()) {
                 redirect_with_msg('physicians.php', 'Staff member added successfully.');
             } else {
-                $msg = 'Error: ' . $stmt->error;
+                set_flash('Error adding staff member: ' . $stmt->error, 'error');
             }
             $stmt->close();
+        }
+
+    } elseif ($action === 'update_meds_type') {
+        $meds_type_id = (int)($_POST['meds_type_id'] ?? 0);
+        $meds_type_name = trim($_POST['meds_type_name'] ?? '');
+        $is_consultation = isset($_POST['is_consultation']) ? 1 : 0;
+
+        if ($meds_type_id <= 0 || $meds_type_name === '') {
+            set_flash('Invalid medication type update.', 'error');
+        } elseif (record_exists($conn, 'meds_types', 'meds_type_name', $meds_type_name, 'meds_type_id', $meds_type_id)) {
+            set_flash('Another medication type already has that name.', 'error');
         } else {
-            set_flash('Staff name is required.', 'error');
+            $stmt = $conn->prepare("UPDATE meds_types SET meds_type_name = ?, is_consultation = ? WHERE meds_type_id = ?");
+            $stmt->bind_param("sii", $meds_type_name, $is_consultation, $meds_type_id);
+            if ($stmt->execute()) {
+                redirect_with_msg('physicians.php', 'Medication type updated successfully.');
+            } else {
+                set_flash('Error updating medication type: ' . $stmt->error, 'error');
+            }
+            $stmt->close();
+        }
+
+    } elseif ($action === 'update_staff') {
+        $staff_id = (int)($_POST['staff_id'] ?? 0);
+        $staff_name = normalize_patient_name($_POST['staff_name'] ?? '');
+        $is_active = isset($_POST['is_active']) ? 1 : 0;
+
+        if ($staff_id <= 0 || $staff_name === '') {
+            set_flash('Invalid staff update.', 'error');
+        } elseif (record_exists($conn, 'staff', 'staff_name', $staff_name, 'staff_id', $staff_id)) {
+            set_flash('Another staff member already has that name.', 'error');
+        } else {
+            $stmt = $conn->prepare("UPDATE staff SET staff_name = ?, is_active = ? WHERE staff_id = ?");
+            $stmt->bind_param("sii", $staff_name, $is_active, $staff_id);
+            if ($stmt->execute()) {
+                redirect_with_msg('physicians.php', 'Staff member updated successfully.');
+            } else {
+                set_flash('Error updating staff member: ' . $stmt->error, 'error');
+            }
+            $stmt->close();
+        }
+
+    } elseif ($action === 'delete_meds_type') {
+        $meds_type_id = (int)($_POST['meds_type_id'] ?? 0);
+        if ($meds_type_id > 0) {
+            $stmt = $conn->prepare("DELETE FROM meds_types WHERE meds_type_id = ?");
+            $stmt->bind_param("i", $meds_type_id);
+            if ($stmt->execute()) {
+                redirect_with_msg('physicians.php', 'Medication type deleted successfully.');
+            } else {
+                set_flash('Cannot delete medication type. It may already be used by patient records.', 'error');
+            }
+            $stmt->close();
+        }
+
+    } elseif ($action === 'delete_staff') {
+        $staff_id = (int)($_POST['staff_id'] ?? 0);
+        if ($staff_id > 0) {
+            $stmt = $conn->prepare("DELETE FROM staff WHERE staff_id = ?");
+            $stmt->bind_param("i", $staff_id);
+            if ($stmt->execute()) {
+                redirect_with_msg('physicians.php', 'Staff member deleted successfully.');
+            } else {
+                set_flash('Cannot delete staff member. It may already be referenced by records.', 'error');
+            }
+            $stmt->close();
         }
     }
 }
@@ -272,6 +346,27 @@ include 'includes/header.php';
 @media print {
     .header-actions, .add-new-row, .btn-save { display: none !important; }
 }
+
+.section-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:14px}
+.section-heading h3{margin:0 0 4px}
+.section-help{margin:0;color:var(--text-secondary);font-size:.78rem}
+.section-count{background:#f1f5f9;color:#475569;padding:5px 9px;border-radius:999px;font-size:.72rem;font-weight:750;white-space:nowrap}
+.table-wrap{overflow-x:auto;border:1px solid var(--border-subtle);border-radius:9px}
+.modern-table{min-width:720px}
+.row-actions{display:flex;justify-content:flex-end;align-items:center;gap:6px}
+.row-actions form{margin:0}
+.check-label{display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:.82rem}
+.modern-input:focus{border-color:#60a5fa;box-shadow:0 0 0 3px rgba(37,99,235,.10);outline:none}
+.add-new-row td{background:#f8fafc}
+.btn-danger{background:#ef4444!important;border-color:#ef4444!important;color:#fff!important}
+.btn-danger:hover{background:#dc2626!important}
+@media(max-width:700px){
+    .dashboard-container{padding:.25rem}
+    .header-actions{width:100%}
+    .header-actions .btn{flex:1}
+    .section-heading{flex-direction:column}
+    .row-actions{justify-content:flex-start}
+}
 </style>
 
 <div class="dashboard-container">
@@ -305,7 +400,7 @@ include 'includes/header.php';
     <section class="card-panel">
         <h3>👨‍⚕️ Physicians &amp; Consultation Rates</h3>
         <div style="overflow-x: auto;">
-            <modern-table-container>
+            
                 <table class="modern-table">
                     <thead>
                         <tr>
@@ -350,48 +445,80 @@ include 'includes/header.php';
                         </tr>
                     </tbody>
                 </table>
-            </modern-table-container>
+            
         </div>
     </section>
 
     <!-- SECTION 2: MEDS TYPES TABLE -->
     <section class="card-panel">
-        <h3>💊 Medication Types</h3>
-        <div style="overflow-x: auto;">
+        <div class="section-heading">
+            <div>
+                <h3>💊 Medication / Visit Types</h3>
+                <p class="section-help">These types are used by the Daily Log to classify visits. You can edit them here.</p>
+            </div>
+            <span class="section-count"><?= $total_meds_types ?> type(s)</span>
+        </div>
+
+        <div class="table-wrap">
             <table class="modern-table">
                 <thead>
                     <tr>
-                        <th style="width: 50%;">Meds Type Name</th>
-                        <th style="width: 30%;">Counts as Consultation</th>
-                        <th style="width: 20%; text-align: right;">Action</th>
+                        <th>Medication / Visit Type</th>
+                        <th style="width:28%">Counts as Consultation</th>
+                        <th style="width:22%;text-align:right">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
-                    <?php foreach ($meds_types_list as $m): ?>
-                        <tr>
-                            <td><strong><?= h($m['meds_type_name']) ?></strong></td>
-                            <td>
-                                <?= $m['is_consultation'] 
-                                    ? '<span class="status-pill active">YES</span>' 
-                                    : '<span class="status-pill inactive">NO</span>' ?>
-                            </td>
-                            <td></td>
-                        </tr>
-                    <?php endforeach; ?>
-
-<!-- Add New Meds Type Row -->
-                    <tr class="add-new-row">
+                <?php foreach ($meds_types_list as $m): ?>
+                    <tr>
+                        <form method="post" action="physicians.php" id="meds-edit-<?= (int)$m['meds_type_id'] ?>">
+                            <input type="hidden" name="action" value="update_meds_type">
+                            <input type="hidden" name="meds_type_id" value="<?= (int)$m['meds_type_id'] ?>">
+                        </form>
                         <td>
-                            <input type="text" name="meds_type_name" class="modern-input" placeholder="+ Add new meds type" form="add-meds-type" required>
+                            <input type="text" name="meds_type_name" class="modern-input"
+                                   value="<?= h($m['meds_type_name']) ?>"
+                                   form="meds-edit-<?= (int)$m['meds_type_id'] ?>" required>
                         </td>
                         <td>
-                            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; font-size: 0.85rem;">
-                                <input type="checkbox" name="is_consultation" value="1" class="checkbox-custom" form="add-meds-type" checked> 
-                                Counts as consultation
+                            <label class="check-label">
+                                <input type="checkbox" name="is_consultation" value="1" class="checkbox-custom"
+                                       form="meds-edit-<?= (int)$m['meds_type_id'] ?>"
+                                       <?= (int)$m['is_consultation'] === 1 ? 'checked' : '' ?>>
+                                <span>Counts as consultation</span>
                             </label>
                         </td>
-                        <td style="text-align: right;">
-                            <button type="submit" class="btn btn-accent btn-sm" form="add-meds-type">➕ Add Meds Type</button>
+                        <td>
+                            <div class="row-actions">
+                                <button type="submit" class="btn btn-primary btn-sm" form="meds-edit-<?= (int)$m['meds_type_id'] ?>">💾 Save</button>
+                                <form method="post" action="physicians.php" onsubmit="return confirm('Delete this medication/visit type? This may fail if existing records use it.');">
+                                    <input type="hidden" name="action" value="delete_meds_type">
+                                    <input type="hidden" name="meds_type_id" value="<?= (int)$m['meds_type_id'] ?>">
+                                    <button type="submit" class="btn btn-danger btn-sm">🗑️</button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+
+                    <tr class="add-new-row">
+                        <form method="post" action="physicians.php" id="add-meds-type">
+                            <input type="hidden" name="action" value="add_meds_type">
+                        </form>
+                        <td>
+                            <input type="text" name="meds_type_name" class="modern-input"
+                                   placeholder="Enter new medication / visit type"
+                                   form="add-meds-type" required>
+                        </td>
+                        <td>
+                            <label class="check-label">
+                                <input type="checkbox" name="is_consultation" value="1" class="checkbox-custom"
+                                       form="add-meds-type" checked>
+                                <span>Counts as consultation</span>
+                            </label>
+                        </td>
+                        <td>
+                            <button type="submit" class="btn btn-accent btn-sm" form="add-meds-type">➕ Add Type</button>
                         </td>
                     </tr>
                 </tbody>
@@ -401,41 +528,74 @@ include 'includes/header.php';
 
     <!-- SECTION 3: STAFF TABLE -->
     <section class="card-panel">
-        <h3>👥 Staff Members (for Transmitted By)</h3>
-        <div style="overflow-x: auto;">
+        <div class="section-heading">
+            <div>
+                <h3>👥 Staff Members</h3>
+                <p class="section-help">Manage staff names used for transmitted-by and related workflows.</p>
+            </div>
+            <span class="section-count"><?= $total_staff ?> staff</span>
+        </div>
+
+        <div class="table-wrap">
             <table class="modern-table">
                 <thead>
                     <tr>
-                        <th style="width: 50%;">Staff Name</th>
-                        <th style="width: 30%;">Active Status</th>
-                        <th style="width: 20%; text-align: right;">Action</th>
+                        <th>Staff Name</th>
+                        <th style="width:28%">Status</th>
+                        <th style="width:22%;text-align:right">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
-                    <?php foreach ($staff_list as $s): ?>
-                        <tr>
-                            <td><strong><?= h($s['staff_name']) ?></strong></td>
-                            <td>
-                                <?= $s['is_active'] 
-                                    ? '<span class="status-pill active">Active</span>' 
-                                    : '<span class="status-pill inactive">Inactive</span>' ?>
-                            </td>
-                            <td></td>
-                        </tr>
-                    <?php endforeach; ?>
-
-<!-- Add New Staff Row -->
-                    <tr class="add-new-row">
+                <?php foreach ($staff_list as $s): ?>
+                    <tr>
+                        <form method="post" action="physicians.php" id="staff-edit-<?= (int)$s['staff_id'] ?>">
+                            <input type="hidden" name="action" value="update_staff">
+                            <input type="hidden" name="staff_id" value="<?= (int)$s['staff_id'] ?>">
+                        </form>
                         <td>
-                            <input type="text" name="staff_name" class="modern-input" placeholder="+ Add new staff name" form="add-staff" required>
+                            <input type="text" name="staff_name" class="modern-input"
+                                   value="<?= h($s['staff_name']) ?>"
+                                   form="staff-edit-<?= (int)$s['staff_id'] ?>" required>
                         </td>
                         <td>
-                            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; font-size: 0.85rem;">
-                                <input type="checkbox" name="is_active" value="1" class="checkbox-custom" form="add-staff" checked> 
-                                Active Member
+                            <label class="check-label">
+                                <input type="checkbox" name="is_active" value="1" class="checkbox-custom"
+                                       form="staff-edit-<?= (int)$s['staff_id'] ?>"
+                                       <?= (int)$s['is_active'] === 1 ? 'checked' : '' ?>>
+                                <span class="status-pill <?= (int)$s['is_active'] === 1 ? 'active' : 'inactive' ?>">
+                                    <?= (int)$s['is_active'] === 1 ? 'Active' : 'Inactive' ?>
+                                </span>
                             </label>
                         </td>
-                        <td style="text-align: right;">
+                        <td>
+                            <div class="row-actions">
+                                <button type="submit" class="btn btn-primary btn-sm" form="staff-edit-<?= (int)$s['staff_id'] ?>">💾 Save</button>
+                                <form method="post" action="physicians.php" onsubmit="return confirm('Delete this staff member?');">
+                                    <input type="hidden" name="action" value="delete_staff">
+                                    <input type="hidden" name="staff_id" value="<?= (int)$s['staff_id'] ?>">
+                                    <button type="submit" class="btn btn-danger btn-sm">🗑️</button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+
+                    <tr class="add-new-row">
+                        <form method="post" action="physicians.php" id="add-staff">
+                            <input type="hidden" name="action" value="add_staff">
+                        </form>
+                        <td>
+                            <input type="text" name="staff_name" class="modern-input"
+                                   placeholder="Enter new staff name" form="add-staff" required>
+                        </td>
+                        <td>
+                            <label class="check-label">
+                                <input type="checkbox" name="is_active" value="1" class="checkbox-custom"
+                                       form="add-staff" checked>
+                                <span>Active Member</span>
+                            </label>
+                        </td>
+                        <td>
                             <button type="submit" class="btn btn-accent btn-sm" form="add-staff">➕ Add Staff</button>
                         </td>
                     </tr>
@@ -446,17 +606,10 @@ include 'includes/header.php';
 </div>
 
 <?php
-// Hidden per-row forms (OUTSIDE the tables — required so browsers don't drop them).
-// Table inputs reference these via the form="..." attribute.
+// Physician forms are kept outside the table and connected to their row inputs using form="...".
 ?>
 <form id="add-physician" method="post" action="physicians.php" style="display:none;">
     <input type="hidden" name="action" value="add_physician">
-</form>
-<form id="add-meds-type" method="post" action="physicians.php" style="display:none;">
-    <input type="hidden" name="action" value="add_meds_type">
-</form>
-<form id="add-staff" method="post" action="physicians.php" style="display:none;">
-    <input type="hidden" name="action" value="add_staff">
 </form>
 <?php foreach ($physicians_list as $p): ?>
     <form id="update-physician-<?= (int)$p['physician_id'] ?>" method="post" action="physicians.php" style="display:none;">

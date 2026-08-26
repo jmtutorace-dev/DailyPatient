@@ -39,6 +39,33 @@ function is_admin() {
     return isset($_SESSION['role']) && $_SESSION['role'] === 'admin';
 }
 
+function is_viewer() {
+    return isset($_SESSION['role']) && $_SESSION['role'] === 'viewer';
+}
+
+function allowed_summary_pages() {
+    return ['dashboard.php', 'consultation.php', 'consultation-records.php', 'patient-consultation.php'];
+}
+
+function enforce_page_access() {
+    if (!isset($_SESSION['user_id'])) {
+        return;
+    }
+
+    if (!is_viewer()) {
+        return;
+    }
+
+    $current_page = basename($_SERVER['PHP_SELF']);
+    if (!in_array($current_page, allowed_summary_pages(), true)) {
+        $_SESSION['flash'] = ['msg' => 'Viewer access is restricted to summary pages only.', 'type' => 'error'];
+        header('Location: dashboard.php');
+        exit;
+    }
+}
+
+enforce_page_access();
+
 function current_user() {
     if (isset($_SESSION['user_id'])) {
         return [

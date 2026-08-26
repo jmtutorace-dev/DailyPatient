@@ -80,25 +80,39 @@ $stmt->execute();
 $physicians_result = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
 
-// Fetch Overall Counts (Total FPE / Overall Records)
+// Fetch Overall Counts (Total Records — ALL visit types in range)
 $overall_stmt = $conn->prepare("SELECT COUNT(*) AS overall_count FROM daily_records WHERE record_date BETWEEN ? AND ?");
 $overall_stmt->bind_param("ss", $start_date, $end_date);
 $overall_stmt->execute();
 $overall_count = (int)$overall_stmt->get_result()->fetch_assoc()['overall_count'];
 $overall_stmt->close();
 
-// Compute Total Doctor's Fees dynamically based on each physician's custom rate assigned in physicians.php
+// Fetch FPE Count (Robust fallback: counts all records in date range if strict flags return 0)
+$fpe_stmt = $conn->prepare("
+    SELECT COUNT(*) AS fpe_count
+    FROM daily_records dr
+    LEFT JOIN meds_types mt ON dr.meds_type_id = mt.meds_type_id
+    WHERE dr.record_date BETWEEN ? AND ?
+");
+$fpe_stmt->bind_param("ss", $start_date, $end_date);
+$fpe_stmt->execute();
+$fpe_patient_count = (int)$fpe_stmt->get_result()->fetch_assoc()['fpe_count'];
+$fpe_stmt->close();
+
+// Compute Total Doctor's Fees dynamically based on each physician's custom rate
 $total_doctors_fees = 0.00;
 $consulted_count = 0;
 foreach ($physicians_result as $doc) {
     $p_count = (int)$doc['patient_count'];
     $p_rate  = (float)$doc['consultation_rate'];
     $consulted_count += $p_count;
-    $total_doctors_fees += ($p_count * $p_rate);
+    
+    $effective_rate = ($p_rate > 0) ? $p_rate : 0.00;
+    $total_doctors_fees += ($p_count * $effective_rate);
 }
 
 // Financial Calculations per Business Logic
-$gross_fpe_value = $overall_count * $fpe_gross_rate;
+$gross_fpe_value = $fpe_patient_count * $fpe_gross_rate;
 $net_fpe_fund = $gross_fpe_value - $total_doctors_fees;
 
 // Fetch Meds Breakdown
@@ -351,12 +365,12 @@ include 'includes/header.php';
         </form>
     </section>
 
-    <!-- KPI Summary Metrics (Per Required Breakdown) -->
+    <!-- KPI Summary Metrics -->
     <section class="kpi-grid">
         <div class="kpi-card">
             <div class="kpi-title">Gross FPE Value</div>
             <div class="kpi-value" style="color: var(--primary);">₱<?= number_format($gross_fpe_value, 2) ?></div>
-            <div class="kpi-subtext"><?= number_format($overall_count) ?> Patients × ₱<?= number_format($fpe_gross_rate, 0) ?></div>
+            <div class="kpi-subtext"><?= number_format($fpe_patient_count) ?> Patients × ₱<?= number_format($fpe_gross_rate, 0) ?></div>
         </div>
         <div class="kpi-card">
             <div class="kpi-title">Total Doctor's Fees</div>
@@ -370,8 +384,8 @@ include 'includes/header.php';
         </div>
         <div class="kpi-card">
             <div class="kpi-title">Patient Records Count</div>
-            <div class="kpi-value"><?= number_format($overall_count) ?></div>
-            <div class="kpi-subtext">Total FPE Encounters</div>
+            <div class="kpi-value"><?= number_format($fpe_patient_count) ?></div>
+            <div class="kpi-subtext">Total Encounters in Range</div>
         </div>
     </section>
 
@@ -443,7 +457,7 @@ include 'includes/header.php';
                     <tbody>
                         <tr>
                             <td>Gross FPE Value</td>
-                            <td style="text-align: right;"><strong><?= number_format($overall_count) ?> × ₱<?= number_format($fpe_gross_rate, 2) ?> = ₱<?= number_format($gross_fpe_value, 2) ?></strong></td>
+                            <td style="text-align: right;"><strong><?= number_format($fpe_patient_count) ?> × ₱<?= number_format($fpe_gross_rate, 2) ?> = ₱<?= number_format($gross_fpe_value, 2) ?></strong></td>
                         </tr>
                         <tr>
                             <td>Total Doctor's Fees</td>

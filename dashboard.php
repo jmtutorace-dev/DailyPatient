@@ -11,19 +11,27 @@ $month_start = date('Y-m-01');
 $month_end   = date('Y-m-t');
 $current_year = (int)date('Y');
 
-$stmt = $conn->prepare("SELECT COUNT(*) AS cnt FROM daily_records WHERE record_date = ?");
+// Count DISTINCT patients, not total daily_records rows — a patient who has
+// both an FPE and a follow-up consultation on/within the same period is
+// still just ONE patient, not two. (Same normalization used elsewhere, e.g.
+// index.php's date list count.)
+$stmt = $conn->prepare("SELECT COUNT(DISTINCT LOWER(TRIM(patient_name))) AS cnt FROM daily_records WHERE record_date = ?");
 $stmt->bind_param("s", $today);
 $stmt->execute();
 $patients_today = (int)$stmt->get_result()->fetch_assoc()['cnt'];
 $stmt->close();
 
-$stmt = $conn->prepare("SELECT COUNT(*) AS cnt FROM daily_records WHERE record_date BETWEEN ? AND ?");
+$stmt = $conn->prepare("SELECT COUNT(DISTINCT LOWER(TRIM(patient_name))) AS cnt FROM daily_records WHERE record_date BETWEEN ? AND ?");
 $stmt->bind_param("ss", $month_start, $month_end);
 $stmt->execute();
 $patients_month = (int)$stmt->get_result()->fetch_assoc()['cnt'];
 $stmt->close();
 
-$stmt = $conn->prepare("SELECT COUNT(*) AS cnt FROM daily_records dr LEFT JOIN meds_types mt ON dr.meds_type_id = mt.meds_type_id WHERE dr.record_date BETWEEN ? AND ? AND (dr.physician_id IS NULL OR mt.is_consultation = 0)");
+// Canonical FPE condition (meds_type_id IS NULL OR is_consultation = 0) —
+// matches patient_is_registered()/get_existing_fpe() elsewhere. Since a
+// patient can only ever have ONE FPE row (enforced in index.php), this
+// COUNT(*) is already equivalent to a unique-patient count for FPEs.
+$stmt = $conn->prepare("SELECT COUNT(*) AS cnt FROM daily_records dr LEFT JOIN meds_types mt ON dr.meds_type_id = mt.meds_type_id WHERE dr.record_date BETWEEN ? AND ? AND (dr.meds_type_id IS NULL OR mt.is_consultation = 0)");
 $stmt->bind_param("ss", $month_start, $month_end);
 $stmt->execute();
 $fpe_count = (int)$stmt->get_result()->fetch_assoc()['cnt'];

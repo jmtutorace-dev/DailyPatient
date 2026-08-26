@@ -7,6 +7,8 @@
 
 </div><!-- .main-content -->
 
+<button id="back-to-top" class="back-to-top" type="button" aria-label="Back to top">↑</button>
+
 <script>
 // Sidebar toggle for mobile
 function toggleSidebar() {

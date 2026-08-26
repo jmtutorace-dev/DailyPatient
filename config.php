@@ -159,3 +159,51 @@ function export_csv($filename, $headers, $data, $conn = null) {
     exit;
 }
 
+/**
+ * Safely sanitize numeric input for money fields and similar values.
+ */
+function sanitize_decimal($value, $min = 0.0, $max = null) {
+    $num = (float) $value;
+
+    if (!is_finite($num)) {
+        $num = 0.0;
+    }
+
+    if ($num < $min) {
+        $num = (float) $min;
+    }
+
+    if ($max !== null && $num > $max) {
+        $num = (float) $max;
+    }
+
+    return round($num, 2);
+}
+
+/**
+ * Check if a value already exists in a table for a given column.
+ */
+function record_exists($conn, $table, $column, $value, $ignore_column = null, $ignore_value = null) {
+    $sql = "SELECT 1 FROM `{$table}` WHERE LOWER(`{$column}`) = LOWER(?)";
+    $types = 's';
+    $params = [$value];
+
+    if ($ignore_column !== null && $ignore_value !== null) {
+        $sql .= " AND `{$ignore_column}` != ?";
+        $types .= 'i';
+        $params[] = (int) $ignore_value;
+    }
+
+    $stmt = $conn->prepare($sql);
+    if (!$stmt) {
+        return false;
+    }
+
+    $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $exists = $stmt->get_result()->num_rows > 0;
+    $stmt->close();
+
+    return $exists;
+}
+

@@ -9,11 +9,13 @@ if (isset($_SESSION['user_id'])) {
     exit;
 }
 
-// Auto-create default admin if users table is empty (first run)
+// Auto-create default admin and viewer if users table is empty (first run)
 $check = $conn->query("SELECT COUNT(*) AS cnt FROM users");
 if ($check && (int)$check->fetch_assoc()['cnt'] === 0) {
-    $default_hash = password_hash('admin123', PASSWORD_DEFAULT);
-    $conn->query("INSERT INTO users (username, password_hash, full_name, role) VALUES ('admin', '$default_hash', 'Administrator', 'admin')");
+    $default_admin_hash = password_hash('admin123', PASSWORD_DEFAULT);
+    $default_viewer_hash = password_hash('viewer123', PASSWORD_DEFAULT);
+    $conn->query("INSERT INTO users (username, password_hash, full_name, role) VALUES ('admin', '$default_admin_hash', 'Administrator', 'admin')");
+    $conn->query("INSERT INTO users (username, password_hash, full_name, role) VALUES ('viewer', '$default_viewer_hash', 'Viewer User', 'viewer')");
 }
 
 $error = '';

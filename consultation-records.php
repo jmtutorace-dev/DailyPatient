@@ -31,12 +31,89 @@ $offset = ($page - 1) * $per_page;
 // --- Reference data ---
 $physicians_list = $conn->query("SELECT physician_id, physician_name FROM physicians WHERE is_active = 1 ORDER BY physician_name")->fetch_all(MYSQLI_ASSOC);
 
+// --- 2nd Tranche encoding status ---
+// IMPORTANT: This is an ADMINISTRATIVE ENCODING FLAG ONLY.
+// It is NOT a visit, FPE, consultation, medicine, laboratory service,
+// and it NEVER writes to daily_records.
+//
+// Status is stored in a small JSON file so this feature does not depend on
+// any extra MySQL table and cannot affect visit counts.
+$tranche_status_file = __DIR__ . DIRECTORY_SEPARATOR . 'yakap_2nd_tranche.json';
+
+function load_second_tranche_status($file) {
+    if (!is_file($file)) {
+        return [];
+    }
+
+    $raw = @file_get_contents($file);
+    if ($raw === false || trim($raw) === '') {
+        return [];
+    }
+
+    $data = json_decode($raw, true);
+    if (!is_array($data)) {
+        return [];
+    }
+
+    return $data;
+}
+
+function save_second_tranche_status($file, $data) {
+    $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    if ($json === false) {
+        return false;
+    }
+
+    return @file_put_contents($file, $json, LOCK_EX) !== false;
+}
+
+$second_tranche_status = load_second_tranche_status($tranche_status_file);
+
 // --- Handle POST: delete a consultation (consultation-type rows only) ---
 // Safety: this page must NEVER delete an FPE/intake row. We re-verify
 // server-side that the target row maps to is_consultation = 1 before
 // touching anything; if that check fails we abort and delete nothing.
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
+
+    if ($action === 'toggle_second_tranche') {
+        // Only authenticated non-viewers may change tranche status.
+        if (is_viewer()) {
+            redirect_with_msg('consultation-records.php', 'View-only users cannot change 2nd Tranche status.', 'error');
+        }
+
+        $patient_name = trim($_POST['patient_name'] ?? '');
+        $second_tranche = isset($_POST['second_tranche']) ? (int)$_POST['second_tranche'] : 0;
+
+        if ($patient_name !== '') {
+            if ($second_tranche === 1) {
+                // ENCODING ONLY. No daily_records INSERT/UPDATE occurs here.
+                $second_tranche_status[$patient_name] = [
+                    'encoded' => true,
+                    'encoded_at' => date('Y-m-d H:i:s')
+                ];
+                save_second_tranche_status($tranche_status_file, $second_tranche_status);
+            } else {
+                // Remove only the encoding marker.
+                unset($second_tranche_status[$patient_name]);
+                save_second_tranche_status($tranche_status_file, $second_tranche_status);
+            }
+        }
+
+        // Preserve the current filters/page after marking the patient.
+        $back_params = [];
+        if (!empty($_POST['filter_physician'])) { $back_params[] = 'filter_physician=' . (int)$_POST['filter_physician']; }
+        if (!empty($_POST['date_from'])) { $back_params[] = 'date_from=' . urlencode($_POST['date_from']); }
+        if (!empty($_POST['date_to'])) { $back_params[] = 'date_to=' . urlencode($_POST['date_to']); }
+        if (!empty($_POST['name_search'])) { $back_params[] = 'name_search=' . urlencode($_POST['name_search']); }
+        if (!empty($_POST['page'])) { $back_params[] = 'page=' . (int)$_POST['page']; }
+
+        $back_url = 'consultation-records.php' . ($back_params ? '?' . implode('&', $back_params) : '');
+        redirect_with_msg(
+            $back_url,
+            $second_tranche ? "\"{$patient_name}\" marked as 2nd Tranche." : "\"{$patient_name}\" removed from 2nd Tranche."
+        );
+    }
 
     if ($action === 'delete_consultation') {
         $record_id = (int)($_POST['record_id'] ?? 0);
@@ -159,15 +236,50 @@ $data_stmt->execute();
 $consult_rows = $data_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 $data_stmt->close();
 
+// Apply the separate encoding marker after the consultation query.
+// This cannot change COUNT(*) because it is not part of the SQL query.
+foreach ($consult_rows as &$consult_row) {
+    $patient_key = $consult_row['patient_name'];
+    $consult_row['second_tranche'] = isset($second_tranche_status[$patient_key]) ? 1 : 0;
+}
+unset($consult_row);
+
 $has_filters = ($filter_physician > 0 || $date_from !== '' || $date_to !== '' || $name_search !== '');
 
 include 'includes/header.php';
 ?>
 
+
+<style>
+/* 2nd Tranche visual status */
+.cr-second-tranche-row td {
+    background: #ecfdf5 !important;
+    border-bottom-color: #a7f3d0 !important;
+}
+.cr-second-tranche-row:hover td {
+    background: #d1fae5 !important;
+}
+.cr-second-tranche-name {
+    color: #047857 !important;
+    font-weight: 700;
+}
+.cr-second-tranche-btn {
+    min-width: 76px;
+}
+.cr-second-tranche-btn.is-marked {
+    background: #16a34a !important;
+    border-color: #15803d !important;
+    color: #fff !important;
+    font-weight: 700;
+}
+</style>
+
 <div class="page-header">
     <h2>🗂️ Consultation Records</h2>
     <div class="page-actions">
-        <a href="patient-consultation.php" class="btn btn-primary btn-sm">+ Log New Consultation</a>
+        <?php if (!is_viewer()): ?>
+            <a href="patient-consultation.php" class="btn btn-primary btn-sm">+ Log New Consultation</a>
+        <?php endif; ?>
     </div>
 </div>
 
@@ -200,7 +312,11 @@ include 'includes/header.php';
     </div>
 
     <?php if (empty($consult_rows)): ?>
-        <div class="empty-state"><?= $has_filters ? 'No consultations match your filters.' : 'No consultations logged yet.' ?> <a href="patient-consultation.php" class="btn btn-outline btn-sm" style="margin-left:0.5rem;">+ Log New Consultation</a></div>
+        <div class="empty-state"><?= $has_filters ? 'No consultations match your filters.' : 'No consultations logged yet.' ?>
+            <?php if (!is_viewer()): ?>
+                <a href="patient-consultation.php" class="btn btn-outline btn-sm" style="margin-left:0.5rem;">+ Log New Consultation</a>
+            <?php endif; ?>
+        </div>
     <?php else: ?>
         <div class="table-wrapper">
             <table>
@@ -217,10 +333,10 @@ include 'includes/header.php';
                 </thead>
                 <tbody>
 <?php foreach ($consult_rows as $row): ?>
-                        <tr class="cr-clickable-row" style="cursor:pointer;" onclick="openPatientDetail('<?= addslashes(h($row['patient_name'])) ?>')">
+                        <tr class="cr-clickable-row <?= !empty($row['second_tranche']) ? 'cr-second-tranche-row' : '' ?>" style="cursor:pointer;" onclick="openPatientDetail('<?= addslashes(h($row['patient_name'])) ?>')">
                             <td class="mono"><?= h(date('M j, Y', strtotime($row['last_visit_date']))) ?></td>
 <td>
-                                <span class="cr-patient-name" title="View full history"><?= h($row['patient_name']) ?></span>
+                                <span class="cr-patient-name <?= !empty($row['second_tranche']) ? 'cr-second-tranche-name' : '' ?>" title="View full history"><?= h($row['patient_name']) ?></span>
                             </td>
                             <td><span class="badge badge-success"><?= (int)$row['visit_count'] ?> visit(s)</span></td>
                             <td><?= h($row['physician_name'] ?: '— No physician —') ?></td>
@@ -231,7 +347,28 @@ include 'includes/header.php';
                                 <span class="pc-flag <?= $row['has_gamot_meds'] ? 'pc-flag-yes' : 'pc-flag-no' ?>"><?= $row['has_gamot_meds'] ? '✓' : '—' ?> Gamot</span>
                             </td>
 <td onclick="event.stopPropagation()">
-                                <a href="patient-consultation.php?q=<?= urlencode($row['patient_name']) ?>" class="btn btn-accent btn-sm">Consultation</a>
+                                <div style="display:flex; gap:0.35rem; align-items:center; justify-content:flex-start; flex-wrap:wrap;">
+                                    <?php if (is_viewer()): ?>
+                                        <span class="badge badge-viewer" style="font-size:0.7rem;">Read Only</span>
+                                    <?php else: ?>
+                                        <form method="post" action="consultation-records.php" style="display:inline;">
+                                            <input type="hidden" name="action" value="toggle_second_tranche">
+                                            <input type="hidden" name="patient_name" value="<?= h($row['patient_name']) ?>">
+                                            <input type="hidden" name="second_tranche" value="<?= !empty($row['second_tranche']) ? '0' : '1' ?>">
+                                            <input type="hidden" name="filter_physician" value="<?= (int)$filter_physician ?>">
+                                            <input type="hidden" name="name_search" value="<?= h($name_search) ?>">
+                                            <input type="hidden" name="date_from" value="<?= h($date_from) ?>">
+                                            <input type="hidden" name="date_to" value="<?= h($date_to) ?>">
+                                            <input type="hidden" name="page" value="<?= (int)$page ?>">
+                                            <button type="submit"
+                                                    class="btn btn-sm cr-second-tranche-btn <?= !empty($row['second_tranche']) ? 'is-marked' : 'btn-outline' ?>"
+                                                    title="<?= !empty($row['second_tranche']) ? 'Marked as 2nd Tranche — click to undo' : 'Mark this patient as 2nd Tranche' ?>">
+                                                <?= !empty($row['second_tranche']) ? '✓ 2nd' : '2nd' ?>
+                                            </button>
+                                        </form>
+                                        <a href="patient-consultation.php?q=<?= urlencode($row['patient_name']) ?>" class="btn btn-accent btn-sm">Consultation</a>
+                                    <?php endif; ?>
+                                </div>
                             </td>
                         </tr>
                     <?php endforeach; ?>
