@@ -365,7 +365,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'filter_records') {
                                     <?php if (is_viewer()): ?>
                                         <span class="hc-badge" style="font-size:0.7rem;">Read Only</span>
                                     <?php else: ?>
-                                        <form method="post" action="consultation-records.php" style="display:inline;" onsubmit="handleTrancheSubmit(event, this)">
+                                        <form method="post" action="consultation-records.php" style="display:inline;" class="cr-tranche-form">
                                             <input type="hidden" name="action" value="toggle_second_tranche">
                                             <input type="hidden" name="patient_name" value="<?= h($row['patient_name']) ?>">
                                             <input type="hidden" name="second_tranche" value="<?= !empty($row['second_tranche']) ? '0' : '1' ?>">
@@ -432,26 +432,65 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
     if ($action === 'toggle_second_tranche') {
+        $is_ajax_tranche = isset($_POST['ajax']) && $_POST['ajax'] === 'toggle_second_tranche';
+
+        // For AJAX requests, ALWAYS return JSON. Do not redirect, because a redirect
+        // would make fetch() receive the whole HTML page instead of a JSON response.
         if (is_viewer()) {
+            if ($is_ajax_tranche) {
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode([
+                    'ok' => false,
+                    'message' => 'View-only users cannot change 2nd Tranche status.'
+                ]);
+                exit;
+            }
             redirect_with_msg('consultation-records.php', 'View-only users cannot change 2nd Tranche status.', 'error');
         }
 
         $patient_name = trim($_POST['patient_name'] ?? '');
         $second_tranche = isset($_POST['second_tranche']) ? (int)$_POST['second_tranche'] : 0;
 
-        if ($patient_name !== '') {
-            $patient_key = mb_strtolower(normalize_patient_name($patient_name));
-
-            if ($second_tranche === 1) {
-                $second_tranche_status[$patient_key] = [
-                    'encoded' => true,
-                    'encoded_at' => date('Y-m-d H:i:s')
-                ];
-                save_second_tranche_status($tranche_status_file, $second_tranche_status);
-            } else {
-                unset($second_tranche_status[$patient_key]);
-                save_second_tranche_status($tranche_status_file, $second_tranche_status);
+        if ($patient_name === '') {
+            if ($is_ajax_tranche) {
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode(['ok' => false, 'message' => 'Patient name is missing.']);
+                exit;
             }
+            redirect_with_msg('consultation-records.php', 'Patient name is missing.', 'error');
+        }
+
+        $patient_key = mb_strtolower(normalize_patient_name($patient_name));
+        $saved = true;
+
+        if ($second_tranche === 1) {
+            $second_tranche_status[$patient_key] = [
+                'encoded' => true,
+                'encoded_at' => date('Y-m-d H:i:s')
+            ];
+            $saved = save_second_tranche_status($tranche_status_file, $second_tranche_status);
+        } else {
+            unset($second_tranche_status[$patient_key]);
+            $saved = save_second_tranche_status($tranche_status_file, $second_tranche_status);
+        }
+
+        if (!$saved) {
+            if ($is_ajax_tranche) {
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode(['ok' => false, 'message' => 'The 2nd Tranche status could not be saved. Check write permissions for the status file.']);
+                exit;
+            }
+            redirect_with_msg('consultation-records.php', 'The 2nd Tranche status could not be saved.', 'error');
+        }
+
+        if ($is_ajax_tranche) {
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode([
+                'ok' => true,
+                'patient_name' => $patient_name,
+                'second_tranche' => ($second_tranche === 1)
+            ], JSON_UNESCAPED_UNICODE);
+            exit;
         }
 
         $back_params = [];
@@ -1163,7 +1202,7 @@ body {
                                         <?php if (is_viewer()): ?>
                                             <span class="hc-badge" style="font-size:0.7rem;">Read Only</span>
                                         <?php else: ?>
-                                            <form method="post" action="consultation-records.php" style="display:inline;" onsubmit="handleTrancheSubmit(event, this)">
+                                            <form method="post" action="consultation-records.php" style="display:inline;" class="cr-tranche-form">
                                                 <input type="hidden" name="action" value="toggle_second_tranche">
                                                 <input type="hidden" name="patient_name" value="<?= h($row['patient_name']) ?>">
                                                 <input type="hidden" name="second_tranche" value="<?= !empty($row['second_tranche']) ? '0' : '1' ?>">
@@ -1269,7 +1308,7 @@ body {
 
         var seq = ++currentRequestSeq;
 
-        var url = 'consultation-records.php?ajax=filter_records&filter_physician=' + encodeURIComponent(physicianId) +
+        var url = window.location.pathname + '?ajax=filter_records&filter_physician=' + encodeURIComponent(physicianId) +
                   '&name_search=' + encodeURIComponent(query) +
                   '&date_from=' + encodeURIComponent(dateFrom) +
                   '&date_to=' + encodeURIComponent(dateTo) +
@@ -1350,10 +1389,123 @@ body {
 
     bindPaginationEvents();
 
-    // Global Tranche form handler for dynamic elements
-    window.handleTrancheSubmit = function(e, form) {
-        // Can be submitted normally or enhanced via AJAX if desired; standard post works perfectly with preservation.
-    };
+    // Global Tranche form handler for dynamic elements.
+    // ONLY the 2nd Tranche button is handled here: save it in the background
+    // and update that row/button without refreshing or moving the page.
+    //
+    // Bound via delegated addEventListener (NOT an inline onsubmit="" attribute).
+    // Some hosting/CSP setups silently ignore inline event-handler attributes,
+    // which lets the form fall through to a real submit -> full page reload ->
+    // browser jumps to the top. Delegation on document also means this keeps
+    // working after fetchFilteredResults() replaces the table's innerHTML,
+    // since we never need to re-bind anything to the new markup.
+    document.addEventListener('submit', function(e) {
+        var form = e.target.closest ? e.target.closest('.cr-tranche-form') : null;
+        if (!form) return;
+        handleTrancheSubmit(e, form);
+    });
+
+    function handleTrancheSubmit(e, form) {
+        if (e) e.preventDefault();
+        if (!form) return false;
+
+        var button = form.querySelector('button[type="submit"]');
+        var row = form.closest('tr');
+        var scrollY = window.pageYOffset || document.documentElement.scrollTop || 0;
+        var originalText = button ? button.textContent.trim() : '2nd';
+        var data = new FormData(form);
+        data.set('ajax', 'toggle_second_tranche');
+
+        if (button) {
+            button.disabled = true;
+            button.style.opacity = '0.65';
+            button.textContent = 'Saving…';
+        }
+
+        // Post to the exact URL currently serving this page, not the form's
+        // relative action attribute. A relative "consultation-records.php"
+        // can resolve to the wrong path depending on how this page's URL is
+        // structured (subfolder, routing, missing trailing slash, etc.),
+        // which is what was causing the HTTP 404 here. window.location.pathname
+        // is guaranteed to be the real path to this same script.
+        var postUrl = window.location.pathname;
+
+        fetch(postUrl, {
+            method: 'POST',
+            body: data,
+            credentials: 'same-origin',
+            headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' }
+        })
+        .then(function(response) {
+            return response.text().then(function(text) {
+                if (!response.ok) {
+                    console.error('2nd Tranche HTTP error', response.status, text);
+                    throw new Error(
+                        'Server error (HTTP ' + response.status + ') while updating 2nd Tranche. ' +
+                        'Response: ' + text.slice(0, 300)
+                    );
+                }
+
+                var result;
+                try {
+                    result = JSON.parse(text);
+                } catch (parseError) {
+                    console.error('2nd Tranche non-JSON response', text);
+                    throw new Error(
+                        'Server returned a non-JSON response while updating 2nd Tranche. ' +
+                        'Response: ' + text.slice(0, 300)
+                    );
+                }
+
+                return result;
+            });
+        })
+        .then(function(result) {
+            if (!result || result.ok !== true) {
+                throw new Error((result && result.message) || 'Unable to update 2nd Tranche status.');
+            }
+
+            var marked = result.second_tranche === true;
+
+            // Update ONLY the clicked row/button. Nothing else is refreshed.
+            if (row) {
+                row.classList.toggle('cr-second-tranche-row', marked);
+                var patientName = row.querySelector('.cr-patient-name');
+                if (patientName) {
+                    patientName.classList.toggle('cr-second-tranche-name', marked);
+                }
+            }
+
+            if (button) {
+                button.disabled = false;
+                button.style.opacity = '';
+                button.classList.toggle('is-marked', marked);
+                button.classList.toggle('btn-hc-outline', !marked);
+                button.textContent = marked ? '✓ 2nd' : '2nd';
+                button.title = marked
+                    ? 'Marked as 2nd Tranche — click to undo'
+                    : 'Mark this patient as 2nd Tranche';
+
+                var hiddenValue = form.querySelector('input[name="second_tranche"]');
+                if (hiddenValue) hiddenValue.value = marked ? '0' : '1';
+            }
+
+            // Preserve the exact viewport position.
+            window.scrollTo(0, scrollY);
+        })
+        .catch(function(error) {
+            console.error('2nd Tranche update error:', error);
+            if (button) {
+                button.disabled = false;
+                button.style.opacity = '';
+                button.textContent = originalText;
+            }
+            window.scrollTo(0, scrollY);
+            alert(error.message || 'Unable to update 2nd Tranche status. Please try again.');
+        });
+
+        return false;
+    }
 
     // Patient Information Modal Logic
     var modal = document.getElementById('patient-detail-modal');
@@ -1376,7 +1528,7 @@ body {
 
         // Use this page's own JSON endpoint. It reads daily_records directly,
         // so the popup is independent of patient-consultation.php markup.
-        var url = 'consultation-records.php?ajax=patient_detail&patient_name=' + encodeURIComponent(name);
+        var url = window.location.pathname + '?ajax=patient_detail&patient_name=' + encodeURIComponent(name);
 
         fetch(url, {
             credentials: 'same-origin',

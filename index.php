@@ -1135,15 +1135,24 @@ body {
     z-index: 1000;
     display: flex;
     justify-content: flex-end;
-    background: rgba(15, 23, 42, 0.5);
-    backdrop-filter: blur(2px);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+.ph-modal.ph-open { opacity: 1; }
+.ph-backdrop {
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(15, 23, 42, 0.55);
+    backdrop-filter: blur(3px);
+    cursor: pointer;
 }
 .ph-panel {
+    position: relative;
     width: 100%;
-    max-width: 520px;
+    max-width: 540px;
     height: 100%;
-    background: #fff;
-    box-shadow: -10px 0 25px rgba(0,0,0,0.1);
+    background: var(--bg-surface);
+    box-shadow: -16px 0 40px rgba(15, 23, 42, 0.18);
     display: flex;
     flex-direction: column;
     animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1);
@@ -1153,15 +1162,128 @@ body {
     border-bottom: 1px solid var(--border-color);
     display: flex;
     justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    background: linear-gradient(to bottom right, var(--primary-light), #ffffff);
+    flex-shrink: 0;
+}
+.ph-header-text { min-width: 0; }
+.ph-eyebrow {
+    margin: 0 0 0.15rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--primary);
+}
+.ph-title {
+    margin: 0;
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #0f172a;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.ph-subtitle {
+    margin: 0.2rem 0 0;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+.ph-close {
+    flex-shrink: 0;
+    width: 34px;
+    height: 34px;
+    border-radius: 999px;
+    border: 1px solid var(--border-color);
+    background: #fff;
+    color: var(--text-muted);
+    font-size: 1.15rem;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
     align-items: center;
-    background: #f8fafc;
+    justify-content: center;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+.ph-close:hover {
+    background: #fee2e2;
+    color: #b91c1c;
+    border-color: #fecaca;
+    transform: rotate(90deg);
 }
 .ph-body {
     padding: 1.5rem;
     overflow-y: auto;
+    overflow-x: hidden;
     flex: 1;
-    max-height: calc(100vh - 70px);
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-color) transparent;
 }
+.ph-body * { max-width: 100%; box-sizing: border-box; }
+.ph-body table { table-layout: fixed; word-break: break-word; }
+.ph-body::-webkit-scrollbar { width: 8px; }
+.ph-body::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 999px; }
+.ph-body::-webkit-scrollbar-track { background: transparent; }
+
+/* Loading / empty / error states */
+.ph-loading, .ph-empty-state, .ph-error-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 0.75rem;
+    padding: 3rem 1rem;
+    color: var(--text-muted);
+}
+.ph-spinner {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: 3px solid var(--primary-light);
+    border-top-color: var(--primary);
+    animation: phSpin 0.7s linear infinite;
+}
+.ph-empty-state .ph-state-icon, .ph-error-state .ph-state-icon { font-size: 2rem; }
+.ph-empty-state strong, .ph-error-state strong { color: #0f172a; font-size: 0.95rem; }
+.ph-empty-state p, .ph-error-state p, .ph-loading p { margin: 0; font-size: 0.85rem; }
+
+/* Generic professional styling for whatever content patient_history.php renders */
+.ph-body table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    margin-bottom: 1.25rem;
+}
+.ph-body table th, .ph-body table td {
+    padding: 0.6rem 0.65rem;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+    vertical-align: top;
+}
+.ph-body table th {
+    background: var(--bg-body);
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 700;
+}
+.ph-body table tr:last-child td { border-bottom: none; }
+.ph-body table tr:hover td { background: var(--primary-light); }
+.ph-body ul, .ph-body ol { margin: 0 0 1rem; padding-left: 1.1rem; font-size: 0.85rem; }
+.ph-body li { margin-bottom: 0.3rem; }
+.ph-body h1, .ph-body h2, .ph-body h3, .ph-body h4 {
+    font-size: 0.95rem;
+    color: #0f172a;
+    margin: 1.25rem 0 0.5rem;
+}
+.ph-body h1:first-child, .ph-body h2:first-child, .ph-body h3:first-child, .ph-body h4:first-child { margin-top: 0; }
+.ph-body p { font-size: 0.85rem; color: #334155; line-height: 1.5; }
+.ph-body hr { border: none; border-top: 1px solid var(--border-color); margin: 1.25rem 0; }
+
+@keyframes phSpin { to { transform: rotate(360deg); } }
 
 @keyframes modalScaleUp {
     from { transform: scale(0.92); opacity: 0; }
@@ -1171,6 +1293,10 @@ body {
 @keyframes slideInRight {
     from { transform: translateX(100%); }
     to { transform: translateX(0); }
+}
+
+@media (max-width: 640px) {
+    .ph-panel { max-width: 100%; }
 }
 </style>
 
@@ -1193,17 +1319,18 @@ body {
         <thead>
             <tr style="background-color: #f2f2f2;">
                 <th style="border: 1px solid #333; padding: 6px; text-align: center; width: 5%;">No.</th>
-                <th style="border: 1px solid #333; padding: 6px; text-align: left; width: 25%;">Patient Full Name</th>
-                <th style="border: 1px solid #333; padding: 6px; text-align: center; width: 10%;">PCU Check</th>
-                <th style="border: 1px solid #333; padding: 6px; text-align: left; width: 20%;">GAMOT</th>
-                <th style="border: 1px solid #333; padding: 6px; text-align: left; width: 20%;">MEDS</th>
-                <th style="border: 1px solid #333; padding: 6px; text-align: left; width: 20%;">LABS</th>
+                <th style="border: 1px solid #333; padding: 6px; text-align: left; width: 20%;">Patient Full Name</th>
+                <th style="border: 1px solid #333; padding: 6px; text-align: left; width: 12%;">Meds Type</th>
+                <th style="border: 1px solid #333; padding: 6px; text-align: center; width: 8%;">PCU Check</th>
+                <th style="border: 1px solid #333; padding: 6px; text-align: left; width: 18%;">GAMOT</th>
+                <th style="border: 1px solid #333; padding: 6px; text-align: left; width: 18%;">MEDS</th>
+                <th style="border: 1px solid #333; padding: 6px; text-align: left; width: 18%;">LABS</th>
             </tr>
         </thead>
         <tbody>
             <?php if (empty($records_rows)): ?>
                 <tr>
-                    <td colspan="6" style="border: 1px solid #333; padding: 12px; text-align: center;">No patient records found for today.</td>
+                    <td colspan="7" style="border: 1px solid #333; padding: 12px; text-align: center;">No patient records found for today.</td>
                 </tr>
             <?php else: 
                 $counter = 1;
@@ -1217,6 +1344,7 @@ body {
                 <tr>
                     <td style="border: 1px solid #333; padding: 6px; text-align: center;"><?= $counter++ ?></td>
                     <td style="border: 1px solid #333; padding: 6px; font-weight: bold;"><?= h($row['patient_name']) ?></td>
+                    <td style="border: 1px solid #333; padding: 6px;"><?= !empty($row['meds_type_name']) ? h($row['meds_type_name']) : '<span style="color:#888; font-style:italic;">—</span>' ?></td>
                     <td style="border: 1px solid #333; padding: 6px; text-align: center;"><?= $pcu_checked_status ?></td>
                     <td style="border: 1px solid #333; padding: 6px;"><?= !empty($print_gamot) ? h($print_gamot) : '<span style="color:#888; font-style:italic;">None</span>' ?></td>
                     <td style="border: 1px solid #333; padding: 6px;"><?= !empty($print_meds) ? h($print_meds) : '<span style="color:#888; font-style:italic;">None</span>' ?></td>
@@ -1878,13 +2006,20 @@ document.addEventListener('DOMContentLoaded', () => {
 <!-- Patient History Modal -->
 <div id="patient-history-modal" class="ph-modal" role="dialog" aria-modal="true" aria-labelledby="ph-title" hidden style="display:none;">
     <div class="ph-backdrop" onclick="closePatientHistory()"></div>
-    <div class="ph-panel card">
+    <div class="ph-panel">
         <div class="ph-header">
-            <h3 class="ph-title" id="ph-title">Patient History</h3>
+            <div class="ph-header-text">
+                <p class="ph-eyebrow">🕘 Patient History</p>
+                <h3 class="ph-title" id="ph-title">Patient History</h3>
+                <p class="ph-subtitle" id="ph-subtitle">Full visit record</p>
+            </div>
             <button type="button" class="ph-close" id="ph-close" onclick="closePatientHistory()" aria-label="Close">&times;</button>
         </div>
         <div class="ph-body" id="patient-history-body">
-            <div class="ph-loading">Loading history…</div>
+            <div class="ph-loading">
+                <div class="ph-spinner"></div>
+                <p>Loading history…</p>
+            </div>
         </div>
     </div>
 </div>
@@ -2081,29 +2216,80 @@ function escapeHtml(text) {
 function openPatientHistory(patientName) {
     const modal = document.getElementById('patient-history-modal');
     const title = document.getElementById('ph-title');
+    const subtitle = document.getElementById('ph-subtitle');
     const body = document.getElementById('patient-history-body');
     if (!modal || !body) return;
 
     title.textContent = patientName || 'Patient History';
-    modal.hidden = false; 
+    if (subtitle) subtitle.textContent = 'Full visit record';
+
+    modal.hidden = false;
     modal.style.display = 'flex';
-    body.innerHTML = '<div class="ph-loading">Loading history…</div>';
+    document.body.style.overflow = 'hidden';
+    // Force reflow so the opacity transition actually plays.
+    requestAnimationFrame(() => modal.classList.add('ph-open'));
+
+    body.innerHTML = '<div class="ph-loading"><div class="ph-spinner"></div><p>Loading history…</p></div>';
 
     fetch('patient_history.php?patient_name=' + encodeURIComponent(patientName))
         .then(response => {
             if (!response.ok) throw new Error('Network error');
             return response.text();
         })
-        .then(html => body.innerHTML = html)
-        .catch(err => body.innerHTML = '<div class="empty-state-block"><p>Could not load history.</p></div>');
+        .then(html => {
+            const trimmed = (html || '').trim();
+            if (!trimmed) {
+                body.innerHTML = '<div class="ph-empty-state"><div class="ph-state-icon">🗒️</div><strong>No visits recorded yet</strong><p>This patient has no history on file.</p></div>';
+                return;
+            }
+
+            // patient_history.php returns its own full standalone page (own
+            // <head>/<style>/nav). Injecting that as-is duplicates page chrome,
+            // leaks conflicting styles, and any links inside it navigate the
+            // whole app away instead of staying inside this overlay. Parse it
+            // and keep only the body's content, stripped of scripts/styles.
+            let fragment = trimmed;
+            try {
+                const parsed = new DOMParser().parseFromString(trimmed, 'text/html');
+                if (parsed && parsed.body) {
+                    parsed.body.querySelectorAll('script, style, link[rel="stylesheet"], header, nav').forEach(el => el.remove());
+                    fragment = parsed.body.innerHTML.trim() || fragment;
+                }
+            } catch (e) { /* fall back to raw html if parsing fails */ }
+
+            body.innerHTML = fragment || '<div class="ph-empty-state"><div class="ph-state-icon">🗒️</div><strong>No visits recorded yet</strong><p>This patient has no history on file.</p></div>';
+        })
+        .catch(err => {
+            body.innerHTML = '<div class="ph-error-state"><div class="ph-state-icon">⚠️</div><strong>Could not load history</strong><p>Please check your connection and try again.</p></div>';
+        });
 }
+
+// Any link rendered inside the history panel (e.g. a stray "back to
+// dashboard" link from patient_history.php) should never navigate the whole
+// app away — this is a read-only overlay, not a page.
+document.addEventListener('click', function (e) {
+    const body = document.getElementById('patient-history-body');
+    if (!body || !body.contains(e.target)) return;
+    const link = e.target.closest('a[href]');
+    if (link) e.preventDefault();
+});
 
 function closePatientHistory() {
     const modal = document.getElementById('patient-history-modal');
-    if (modal) { modal.hidden = true; modal.style.display = 'none'; }
+    if (!modal) return;
+    modal.classList.remove('ph-open');
+    document.body.style.overflow = '';
+    // Wait for the fade-out to finish before actually hiding it.
+    setTimeout(() => {
+        modal.hidden = true;
+        modal.style.display = 'none';
+    }, 200);
 }
 
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closePatientHistory(); });
+document.addEventListener('keydown', e => {
+    const modal = document.getElementById('patient-history-modal');
+    if (e.key === 'Escape' && modal && !modal.hidden) closePatientHistory();
+});
 </script>
 
 
