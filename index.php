@@ -9,6 +9,24 @@ require_once 'includes/auth.php';
 // 2nd Tranche is an administrative encoding status only.
 // It is stored separately from daily_records, so it NEVER affects visits.
 $tranche_status_file = __DIR__ . DIRECTORY_SEPARATOR . 'yakap_2nd_tranche.json';
+$pcu_status_file = __DIR__ . '/pcu_status.json';
+$pcu_status = [];
+
+$pcu_profile_file = __DIR__ . '/pcu_patient_profiles.json';
+$pcu_profiles = [];
+if (file_exists($pcu_profile_file)) {
+    $decoded_profiles = json_decode(file_get_contents($pcu_profile_file), true);
+    if (is_array($decoded_profiles)) {
+        $pcu_profiles = $decoded_profiles;
+    }
+}
+if (file_exists($pcu_status_file)) {
+    $decoded_pcu = json_decode(file_get_contents($pcu_status_file), true);
+    if (is_array($decoded_pcu)) foreach ($decoded_pcu as $name => $value) {
+        $key = mb_strtolower(normalize_patient_name((string)$name));
+        if ($key !== '') $pcu_status[$key] = $value;
+    }
+}
 $second_tranche_status = [];
 if (is_file($tranche_status_file) && is_readable($tranche_status_file)) {
     $raw_tranche = @file_get_contents($tranche_status_file);
@@ -282,6 +300,58 @@ if (isset($_GET['export']) && $_GET['export'] === 'csv') {
 // --- FORM ACTIONS ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
+    if ($action === 'save_pcu_profile') {
+        $patient_name = normalize_patient_name($_POST['patient_name'] ?? '');
+        $pcu_key = mb_strtolower($patient_name);
+
+        if ($pcu_key === '') {
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'message' => 'Patient name is required.']);
+            exit;
+        }
+
+        $pcu_profiles[$pcu_key] = [
+            'patient_name' => $patient_name,
+            'last_name'    => trim($_POST['last_name'] ?? ''),
+            'first_name'   => trim($_POST['first_name'] ?? ''),
+            'middle_name'  => trim($_POST['middle_name'] ?? ''),
+            'no_middle'    => !empty($_POST['no_middle']) ? 1 : 0,
+            'suffix'       => trim($_POST['suffix'] ?? ''),
+            'birth_date'   => trim($_POST['birth_date'] ?? ''),
+            'sex'          => trim($_POST['sex'] ?? ''),
+            'updated_at'   => date('Y-m-d H:i:s')
+        ];
+
+        file_put_contents(
+            $pcu_profile_file,
+            json_encode($pcu_profiles, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE),
+            LOCK_EX
+        );
+
+        header('Content-Type: application/json');
+        echo json_encode(['success' => true, 'profile' => $pcu_profiles[$pcu_key]]);
+        exit;
+    }
+
+    if ($action === 'toggle_pcu') {
+        $name = normalize_patient_name($_POST['patient_name'] ?? '');
+        $key = mb_strtolower($name);
+        if ($key !== '') {
+            if (isset($pcu_status[$key])) unset($pcu_status[$key]);
+            else $pcu_status[$key] = ['done' => true, 'done_at' => date('Y-m-d H:i:s')];
+            file_put_contents($pcu_status_file, json_encode($pcu_status, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
+        }
+        if (!empty($_POST['ajax'])) {
+            header('Content-Type: application/json');
+            echo json_encode([
+                'success' => true,
+                'pcu_done' => ($key !== '' && isset($pcu_status[$key]))
+            ]);
+            exit;
+        }
+        header('Location: index.php?date=' . urlencode($_POST['record_date'] ?? date('Y-m-d')));
+        exit;
+    }
     if ($action === 'add') {
         $record_date = $_POST['record_date'] ?? '';
         $patient_name = normalize_patient_name($_POST['patient_name'] ?? '');
@@ -463,13 +533,64 @@ $records_rows = array_values($patient_rows);
 // This does not touch the visit data or daily_records.
 foreach ($records_rows as &$display_row) {
     $display_row['second_tranche'] = is_second_tranche_patient($display_row['patient_name'], $second_tranche_status) ? 1 : 0;
+    $pcu_key = mb_strtolower(normalize_patient_name($display_row['patient_name']));
+    $display_row['pcu_done'] = isset($pcu_status[$pcu_key]) ? 1 : 0;
+    $display_row['pcu_profile'] = $pcu_profiles[$pcu_key] ?? [];
 }
 unset($display_row);
 
 $has_filters = (!empty($search_query) || $filter_physician > 0 || $filter_meds_type > 0);
 
 include 'includes/header.php';
-?>
+?><style>
+/* Compact Single-Row Add Patient Panel */
+.add-patient-panel { 
+    padding: 0.6rem 1rem !important; 
+    margin-bottom: 1rem !important;
+}
+.add-patient-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+.add-patient-caption {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+#add-patient-form-wrap {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border-color);
+}
+.inline-form-top {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+}
+.inline-form-top .custom-autocomplete-wrapper {
+    flex: 2;
+    min-width: 180px;
+}
+.inline-form-top select {
+    flex: 1;
+    min-width: 130px;
+}
+.inline-form-top .select-card-box {
+    padding: 0.35rem 0.5rem;
+}
+</style>
+<style>
+/* Compact patient action buttons so Consultation, PCU, and History fit cleanly */
+.patient-action-btn {
+    padding: 0.28rem 0.55rem !important;
+    font-size: 0.72rem !important;
+    line-height: 1.15 !important;
+    white-space: nowrap;
+}
+</style>
+
 
 <style>
 :root {
@@ -731,17 +852,6 @@ body {
     box-shadow: var(--shadow-subtle);
 }
 
-.inline-form-top {
-    display: grid;
-    grid-template-columns: 2fr 1.5fr 1.5fr repeat(3, auto) auto;
-    gap: 0.75rem;
-    align-items: center;
-}
-
-@media (max-width: 1100px) {
-    .inline-form-top { grid-template-columns: 1fr 1fr; }
-}
-
 .select-card-box {
     display: flex;
     align-items: center;
@@ -967,46 +1077,54 @@ body {
     <!-- Main Content Area -->
     <main class="main-col">
         <!-- Quick Add Panel -->
-        <div class="add-record-panel">
-            <div style="font-weight: 600; font-size: 1rem; margin-bottom: 0.85rem; color: var(--primary-dark);">
-                ➕ Add New Record for <?= h(date('F j, Y', strtotime($selected_date))) ?>
+        <div class="add-record-panel add-patient-panel">
+            <div class="add-patient-header">
+                <div style="display: flex; align-items: baseline; gap: 0.75rem;">
+                    <span style="font-weight: 600; font-size: 0.95rem; color: var(--primary-dark);">Add Patient Record</span>
+                    <span class="add-patient-caption"><?= h(date('F j, Y', strtotime($selected_date))) ?></span>
+                </div>
+                <button type="button" id="toggle-add-patient" class="btn btn-primary btn-sm" aria-expanded="false" style="padding: 0.25rem 0.75rem; font-size: 0.8rem;">
+                    + Add Patient
+                </button>
             </div>
-            <form method="post" action="index.php" autocomplete="off">
+
+            <div id="add-patient-form-wrap" hidden>
+                <form method="post" action="index.php" autocomplete="off">
                 <input type="hidden" name="action" value="add">
                 <input type="hidden" name="record_date" value="<?= h($selected_date) ?>">
 
                 <div class="inline-form-top">
                     <!-- Enhanced Patient Name Input with Scrollable Custom Suggestions List -->
                     <div class="custom-autocomplete-wrapper">
-                        <input type="text" name="patient_name" id="add_patient_input" placeholder="Patient Name *" required style="width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border-color); border-radius: var(--radius-sm); outline:none; background:#fff;" oninput="filterPatients(this.value, 'add-suggestions')" onfocus="filterPatients(this.value, 'add-suggestions')">
+                        <input type="text" name="patient_name" id="add_patient_input" placeholder="Patient Name *" required style="width: 100%; padding: 0.4rem 0.6rem; border: 1px solid var(--border-color); border-radius: var(--radius-sm); outline:none; background:#fff; font-size: 0.85rem;" oninput="filterPatients(this.value, 'add-suggestions')" onfocus="filterPatients(this.value, 'add-suggestions')">
                         <ul id="add-suggestions" class="custom-suggestions-list"></ul>
                     </div>
 
-                    <select name="physician_id" style="padding: 0.5rem 0.75rem; border: 1px solid var(--border-color); border-radius: var(--radius-sm); outline:none; background:#fff;">
+                    <select name="physician_id" style="padding: 0.4rem 0.6rem; border: 1px solid var(--border-color); border-radius: var(--radius-sm); outline:none; background:#fff; font-size: 0.85rem;">
                         <option value="">-- Physician --</option>
                         <?php foreach ($physicians_list as $p): ?>
                             <option value="<?= (int)$p['physician_id'] ?>"><?= h($p['physician_name']) ?></option>
                         <?php endforeach; ?>
                     </select>
 
-                    <select name="meds_type_id" id="add_meds_type_id" style="padding: 0.5rem 0.75rem; border: 1px solid var(--border-color); border-radius: var(--radius-sm); outline:none; background:#fff;">
+                    <select name="meds_type_id" id="add_meds_type_id" style="padding: 0.4rem 0.6rem; border: 1px solid var(--border-color); border-radius: var(--radius-sm); outline:none; background:#fff; font-size: 0.85rem;">
                         <option value="">-- Meds Type --</option>
                         <?php foreach ($meds_types_list as $mt): ?>
                             <option value="<?= (int)$mt['meds_type_id'] ?>" <?= empty($mt['is_consultation']) ? 'data-is-fpe="1"' : '' ?>><?= h($mt['meds_type_name']) ?></option>
                         <?php endforeach; ?>
                     </select>
 
-                    <label class="select-card-box" style="background:#fff;">
+                    <label class="select-card-box" style="background:#fff; font-size: 0.8rem;">
                         <input type="checkbox" name="has_meds" value="1" onchange="toggleBox(this, 'add-meds-box')"> Meds
                     </label>
-                    <label class="select-card-box" style="background:#fff;">
+                    <label class="select-card-box" style="background:#fff; font-size: 0.8rem;">
                         <input type="checkbox" name="has_labs" value="1" onchange="toggleBox(this, 'add-labs-box')"> Labs
                     </label>
-                    <label class="select-card-box" style="background:#fff;">
+                    <label class="select-card-box" style="background:#fff; font-size: 0.8rem;">
                         <input type="checkbox" name="has_gamot_meds" value="1" onchange="toggleBox(this, 'add-gamot-box')"> Gamot
                     </label>
 
-                    <button type="submit" id="add_record_btn" class="btn btn-primary btn-sm">Add Record</button>
+                    <button type="submit" id="add_record_btn" class="btn btn-primary btn-sm" style="padding: 0.4rem 0.8rem;">Save</button>
                 </div>
 
                 <!-- Add Form Standard Meds Selector -->
@@ -1056,7 +1174,8 @@ body {
                         </div>
                     <?php endforeach; ?>
                 </div>
-            </form>
+                </form>
+            </div>
         </div>
 
         <!-- Filter Bar Card -->
@@ -1105,13 +1224,14 @@ body {
                             <th>Availed Services</th>
                             <th style="text-align: right;">Actions</th>
                             <th>Consultation</th>
+                             <th style="text-align: center;">PCU</th>
                             <th style="text-align: center;">History</th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php if (empty($records_rows)): ?>
                             <tr>
-                                <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 3rem;">
+                                <td colspan="8" style="text-align: center; color: var(--text-muted); padding: 3rem;">
                                     <?= $has_filters ? 'No records matching filters.' : 'No records logged for this date.' ?>
                                 </td>
                             </tr>
@@ -1149,10 +1269,25 @@ body {
                                     </div>
                                 </td>
                                 <td style="vertical-align: middle;" onclick="event.stopPropagation()">
-                                    <a href="patient-consultation.php?q=<?= urlencode($row['patient_name']) ?>" class="btn btn-outline btn-sm">Consultation</a>
+                                    <a href="patient-consultation.php?q=<?= urlencode($row['patient_name']) ?>" class="btn btn-outline btn-sm patient-action-btn">Consultation</a>
                                 </td>
                                 <td style="text-align: center; vertical-align: middle;" onclick="event.stopPropagation()">
-                                    <button type="button" class="btn btn-outline btn-sm" data-patient="<?= h($row['patient_name']) ?>" onclick="openPatientHistory(this.dataset.patient)">History</button>
+                                    <form method="post" action="index.php" style="display:inline;" class="pcu-toggle-form" onsubmit="return false;">
+                                        <input type="hidden" name="action" value="toggle_pcu">
+                                        <input type="hidden" name="ajax" value="1">
+                                        <input type="hidden" name="patient_name" value="<?= h($row['patient_name']) ?>">
+                                        <input type="hidden" name="record_date" value="<?= h($selected_date) ?>">
+                                        <button type="button"
+    class="btn btn-sm patient-action-btn <?= !empty($row['pcu_done']) ? 'btn-primary' : 'btn-outline' ?>"
+    data-pcu-done="<?= !empty($row['pcu_done']) ? '1' : '0' ?>"
+    data-patient="<?= h($row['patient_name']) ?>"
+    onclick="togglePCU(this); return false;">
+                                            <?= !empty($row['pcu_done']) ? '✓ PCU' : 'PCU' ?>
+                                        </button>
+                                    </form>
+                                </td>
+                                <td style="text-align: center; vertical-align: middle;" onclick="event.stopPropagation()">
+                                    <button type="button" class="btn btn-outline btn-sm patient-action-btn" data-patient="<?= h($row['patient_name']) ?>" onclick="openPatientHistory(this.dataset.patient)">History</button>
                                 </td>
                             </tr>
                         <?php endforeach; endif; ?>
@@ -1497,6 +1632,88 @@ function closePatientHistory() {
 }
 
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closePatientHistory(); });
+</script>
+
+
+<script>
+/*
+ * PCU button: STATUS ONLY.
+ * Clicking PCU only marks/unmarks the patient as PCU.
+ * It does not open PhilHealth, a modal, another page, or an API.
+ */
+function togglePCU(button) {
+    var form = button.closest('.pcu-toggle-form');
+    if (!form || button.dataset.loading === '1') return false;
+
+    button.dataset.loading = '1';
+    button.disabled = true;
+
+    var formData = new FormData(form);
+    formData.set('ajax', '1');
+
+    fetch(form.getAttribute('action') || 'index.php', {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'Accept': 'application/json'
+        },
+        credentials: 'same-origin'
+    })
+    .then(function(response) {
+        if (!response.ok) throw new Error('PCU request failed');
+        return response.json();
+    })
+    .then(function(data) {
+        if (!data || !data.success) throw new Error('PCU update failed');
+
+        if (data.pcu_done) {
+            button.textContent = '✓ PCU';
+            button.dataset.pcuDone = '1';
+            button.classList.remove('btn-outline');
+            button.classList.add('btn-primary');
+        } else {
+            button.textContent = 'PCU';
+            button.dataset.pcuDone = '0';
+            button.classList.remove('btn-primary');
+            button.classList.add('btn-outline');
+        }
+    })
+    .catch(function(error) {
+        console.error(error);
+        alert('PCU status could not be updated.');
+    })
+    .finally(function() {
+        button.disabled = false;
+        delete button.dataset.loading;
+    });
+
+    return false;
+}
+</script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const toggle = document.getElementById('toggle-add-patient');
+    const wrap = document.getElementById('add-patient-form-wrap');
+
+    if (toggle && wrap) {
+        toggle.addEventListener('click', function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+
+            wrap.hidden = !wrap.hidden;
+            const open = !wrap.hidden;
+            toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+            toggle.textContent = open ? '− Hide Form' : '+ Add Patient';
+
+            if (open) {
+                const input = document.getElementById('add_patient_input');
+                if (input) setTimeout(() => input.focus(), 50);
+            }
+        });
+    }
+});
 </script>
 
 <?php include 'includes/footer.php'; ?>
