@@ -69,6 +69,17 @@ function save_second_tranche_status($file, $data) {
 
 $second_tranche_status = load_second_tranche_status($tranche_status_file);
 
+// Keep 2nd Tranche status tied to the normalized patient name so differences
+// in capitalization/extra spaces do not break the status on index.php.
+$normalized_second_tranche_status = [];
+foreach ($second_tranche_status as $stored_name => $stored_value) {
+    $normalized_key = mb_strtolower(normalize_patient_name((string)$stored_name));
+    if ($normalized_key !== '') {
+        $normalized_second_tranche_status[$normalized_key] = $stored_value;
+    }
+}
+$second_tranche_status = $normalized_second_tranche_status;
+
 // --- Handle POST: delete a consultation (consultation-type rows only) ---
 // Safety: this page must NEVER delete an FPE/intake row. We re-verify
 // server-side that the target row maps to is_consultation = 1 before
@@ -86,16 +97,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $second_tranche = isset($_POST['second_tranche']) ? (int)$_POST['second_tranche'] : 0;
 
         if ($patient_name !== '') {
+            $patient_key = mb_strtolower(normalize_patient_name($patient_name));
+
             if ($second_tranche === 1) {
                 // ENCODING ONLY. No daily_records INSERT/UPDATE occurs here.
-                $second_tranche_status[$patient_name] = [
+                // Store the normalized patient key so index.php can recognize
+                // the same patient even if capitalization/spacing differs.
+                $second_tranche_status[$patient_key] = [
                     'encoded' => true,
                     'encoded_at' => date('Y-m-d H:i:s')
                 ];
                 save_second_tranche_status($tranche_status_file, $second_tranche_status);
             } else {
                 // Remove only the encoding marker.
-                unset($second_tranche_status[$patient_name]);
+                unset($second_tranche_status[$patient_key]);
                 save_second_tranche_status($tranche_status_file, $second_tranche_status);
             }
         }
@@ -225,7 +240,7 @@ $data_sql = "
     LEFT JOIN meds_types mt ON dr.meds_type_id = mt.meds_type_id
     WHERE $where_sql
     GROUP BY dr.patient_name
-    ORDER BY last_visit_date DESC, dr.patient_name ASC
+    ORDER BY last_visit_date DESC, MAX(dr.created_at) DESC, dr.patient_name ASC
     LIMIT $per_page OFFSET $offset
 ";
 $data_stmt = $conn->prepare($data_sql);
@@ -239,8 +254,8 @@ $data_stmt->close();
 // Apply the separate encoding marker after the consultation query.
 // This cannot change COUNT(*) because it is not part of the SQL query.
 foreach ($consult_rows as &$consult_row) {
-    $patient_key = $consult_row['patient_name'];
-    $consult_row['second_tranche'] = isset($second_tranche_status[$patient_key]) ? 1 : 0;
+    $patient_key = mb_strtolower(normalize_patient_name($consult_row['patient_name']));
+    $consult_row['second_tranche'] = ($patient_key !== '' && isset($second_tranche_status[$patient_key])) ? 1 : 0;
 }
 unset($consult_row);
 

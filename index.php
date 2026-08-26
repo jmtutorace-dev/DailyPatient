@@ -14,13 +14,18 @@ if (is_file($tranche_status_file) && is_readable($tranche_status_file)) {
     $raw_tranche = @file_get_contents($tranche_status_file);
     $decoded_tranche = json_decode((string)$raw_tranche, true);
     if (is_array($decoded_tranche)) {
-        $second_tranche_status = $decoded_tranche;
+        foreach ($decoded_tranche as $stored_name => $stored_value) {
+            $normalized_key = mb_strtolower(normalize_patient_name((string)$stored_name));
+            if ($normalized_key !== '') {
+                $second_tranche_status[$normalized_key] = $stored_value;
+            }
+        }
     }
 }
 
 function is_second_tranche_patient($patient_name, $status) {
     $key = mb_strtolower(normalize_patient_name($patient_name));
-    return isset($status[$key]);
+    return $key !== '' && isset($status[$key]);
 }
 
 /**

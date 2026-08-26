@@ -62,7 +62,7 @@ for ($i = 6; $i >= 0; $i--) {
 }
 $chart_max = max($chart_max, 1);
 
-$recent = $conn->query("SELECT dr.*, p.physician_name, mt.meds_type_name FROM daily_records dr LEFT JOIN physicians p ON dr.physician_id = p.physician_id LEFT JOIN meds_types mt ON dr.meds_type_id = mt.meds_type_id ORDER BY dr.created_at DESC LIMIT 10");
+$recent = $conn->query("SELECT dr.*, p.physician_name, mt.meds_type_name FROM daily_records dr LEFT JOIN physicians p ON dr.physician_id = p.physician_id LEFT JOIN meds_types mt ON dr.meds_type_id = mt.meds_type_id ORDER BY dr.created_at DESC LIMIT 5");
 
 $md_stmt = $conn->prepare("SELECT p.physician_name, COUNT(dr.record_id) AS cnt, p.consultation_rate FROM physicians p LEFT JOIN daily_records dr ON p.physician_id = dr.physician_id AND dr.record_date BETWEEN ? AND ? GROUP BY p.physician_id ORDER BY cnt DESC");
 $md_stmt->bind_param("ss", $month_start, $month_end);
@@ -81,6 +81,116 @@ $sap_done  = $tx_row && (int)$tx_row['sap'] === 1;
 
 include 'includes/header.php';
 ?>
+<style>
+/* Dashboard UX refinements */
+.section-heading {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:1rem;
+    margin-bottom:0.85rem;
+}
+.section-heading h2 {
+    margin:0;
+}
+.section-caption {
+    margin:0.2rem 0 0;
+    color:var(--text-secondary);
+    font-size:0.76rem;
+}
+.recent-activity-card {
+    min-width:0;
+}
+.recent-list {
+    display:flex;
+    flex-direction:column;
+}
+.recent-item {
+    display:flex;
+    align-items:center;
+    gap:0.75rem;
+    padding:0.78rem 0;
+    border-bottom:1px solid var(--border-color);
+}
+.recent-item:last-child {
+    border-bottom:0;
+    padding-bottom:0;
+}
+.recent-item:first-child {
+    padding-top:0.25rem;
+}
+.recent-icon {
+    width:30px;
+    height:30px;
+    flex:0 0 30px;
+    display:grid;
+    place-items:center;
+    border-radius:50%;
+    background:#ecfdf5;
+    color:#047857;
+    font-size:0.78rem;
+    font-weight:800;
+}
+.recent-main {
+    min-width:0;
+    flex:1;
+}
+.recent-topline {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:0.75rem;
+}
+.recent-patient {
+    min-width:0;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+    font-weight:700;
+    color:var(--text-primary);
+}
+.recent-date {
+    flex:0 0 auto;
+    color:var(--text-secondary);
+    font-size:0.72rem;
+    white-space:nowrap;
+}
+.recent-meta {
+    display:flex;
+    align-items:center;
+    gap:0.35rem;
+    margin-top:0.18rem;
+    color:var(--text-secondary);
+    font-size:0.75rem;
+    overflow:hidden;
+}
+.recent-meta > span:first-child {
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+}
+.recent-dot {
+    color:#94a3b8;
+}
+.recent-type {
+    color:#2563eb;
+    font-weight:600;
+    white-space:nowrap;
+}
+@media (max-width: 600px) {
+    .section-heading {
+        align-items:flex-start;
+    }
+    .recent-topline {
+        display:block;
+    }
+    .recent-date {
+        display:block;
+        margin-top:0.15rem;
+    }
+}
+</style>
+
 
 <div class="stats-grid">
     <div class="stat-card green">
@@ -131,19 +241,34 @@ include 'includes/header.php';
         </div>
     </div>
 
-    <div class="card">
-        <h2>Recent Activity</h2>
+    <div class="card recent-activity-card">
+        <div class="section-heading">
+            <div>
+                <h2>Recent Activity</h2>
+                <p class="section-caption">Latest 5 patient records</p>
+            </div>
+            <a href="index.php?date=<?= h($today) ?>" class="btn btn-outline btn-sm">View All</a>
+        </div>
+
         <?php if ($recent->num_rows === 0): ?>
             <p class="empty-state">No recent records found.</p>
         <?php else: ?>
-            <div class="timeline">
+            <div class="recent-list">
                 <?php while ($r = $recent->fetch_assoc()): ?>
-                <div class="timeline-item">
-                    <div class="tl-date"><?= h(date('M j, Y g:i A', strtotime($r['created_at']))) ?></div>
-                    <div class="tl-title"><?= h($r['patient_name']) ?></div>
-                    <div class="tl-sub">
-<?= h($r['physician_name'] ?? '—') ?>
-                        <?php if ($r['meds_type_name']): ?> &middot; <span class="meds-type-label"><?= h($r['meds_type_name']) ?></span><?php endif; ?>
+                <div class="recent-item">
+                    <div class="recent-icon" aria-hidden="true">✓</div>
+                    <div class="recent-main">
+                        <div class="recent-topline">
+                            <div class="recent-patient"><?= h($r['patient_name']) ?></div>
+                            <div class="recent-date"><?= h(date('M j, g:i A', strtotime($r['created_at']))) ?></div>
+                        </div>
+                        <div class="recent-meta">
+                            <span><?= h($r['physician_name'] ?? '— No physician —') ?></span>
+                            <?php if ($r['meds_type_name']): ?>
+                                <span class="recent-dot">•</span>
+                                <span class="recent-type"><?= h($r['meds_type_name']) ?></span>
+                            <?php endif; ?>
+                        </div>
                     </div>
                 </div>
                 <?php endwhile; ?>
