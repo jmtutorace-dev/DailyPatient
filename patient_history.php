@@ -1,9 +1,11 @@
 <?php
 /**
- * YAKAP GAMOT SYSTEM - Patient History (patient_history_full.php)
+ * YAKAP GAMOT SYSTEM - Patient History (patient_history.php)
  *
  * Full standalone page (search + KPIs + visit history table + CSV export + Directory list).
- * This is the preserved version of the original patient_history.php page.
+ * Also usable as an embeddable fragment (?embed=1) for the Patient History
+ * overlay on index.php — in that mode it renders only the KPI/visit-history
+ * content for the requested patient, with no site chrome or directory list.
  * The sidebar "Patient History" navigation points to this file.
  */
 
@@ -110,15 +112,24 @@ if (isset($_GET['export']) && $_GET['export'] === 'csv' && !empty($_GET['patient
 }
 
 // --- 2. GET SEARCH PARAMETER ---
-$patient_name = trim($_GET['patient'] ?? $_GET['name'] ?? $_POST['patient_name'] ?? '');
+$patient_name = trim($_GET['patient_name'] ?? $_GET['patient'] ?? $_GET['name'] ?? $_POST['patient_name'] ?? '');
+
+// Embed mode: this page is also fetched as a fragment inside the Patient
+// History overlay on index.php. In that context we skip the site chrome
+// (header/footer/nav/full-page styles), the search box, and the full
+// patient directory — the overlay already knows which patient it wants
+// and supplies its own container/styling.
+$is_embed = isset($_GET['embed']) && $_GET['embed'] == '1';
+$embed_link_attrs = $is_embed ? ' target="_blank" rel="noopener"' : '';
 
 // Fetch all unique patient names encoded in the system for the directory view, sorted newest first (latest visit date descending)
 $all_patients_query = "SELECT DISTINCT patient_name, MAX(record_date) as last_visit, COUNT(*) as visit_count FROM daily_records WHERE patient_name IS NOT NULL AND patient_name != '' GROUP BY patient_name ORDER BY last_visit DESC, patient_name ASC";
 $all_patients_result = $conn->query($all_patients_query);
 
-include 'includes/header.php';
+if (!$is_embed) include 'includes/header.php';
 ?>
 
+<?php if (!$is_embed): ?>
 <style>
 /* Modern Healthcare Dashboard Design System */
 :root {
@@ -563,22 +574,52 @@ body {
     .card-panel { border: none; box-shadow: none; padding: 0; }
 }
 </style>
+<?php endif; ?>
+
+<?php if ($is_embed): ?>
+<style>
+/* Compact embed styling — reuses the host page's own CSS variables
+   (--primary, --border-color, etc. from index.php's :root) so this
+   fragment matches the overlay it's rendered inside instead of bringing
+   its own separate theme. */
+.dashboard-container { padding: 0; max-width: none; }
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.75rem; margin-bottom: 1.25rem; }
+.kpi-card { background: var(--bg-surface, #fff); border: 1px solid var(--border-color, #e2e8f0); border-radius: var(--radius-md, 10px); padding: 0.9rem; position: relative; overflow: hidden; }
+.kpi-card::before { content: ""; position: absolute; top: 0; left: 0; width: 4px; height: 100%; background: var(--primary, #2563eb); opacity: 0.6; }
+.kpi-title { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted, #64748b); }
+.kpi-value { font-size: 1.35rem; font-weight: 700; color: #0f172a; margin-top: 0.25rem; }
+.card-panel { background: var(--bg-surface, #fff); border: 1px solid var(--border-color, #e2e8f0); border-radius: var(--radius-md, 10px); padding: 1rem; margin-bottom: 1.25rem; }
+.card-panel h3 { font-size: 0.9rem; font-weight: 700; color: #0f172a; margin: 0 0 0.75rem; }
+.overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem; }
+.overview-box { background: var(--bg-body, #f8fafc); border: 1px solid var(--border-color, #e2e8f0); border-radius: 8px; padding: 0.75rem; }
+.overview-box strong { display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted, #64748b); margin-bottom: 0.35rem; }
+.overview-list { font-size: 0.8rem; white-space: pre-wrap; word-break: break-word; margin: 0; color: #334155; }
+.status-pill { display: inline-flex; align-items: center; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.02em; }
+.status-pill.yes { background: #d1fae5; color: #065f46; }
+.status-pill.no { background: #f1f5f9; color: #64748b; border: 1px solid #cbd5e1; }
+.meds-type-tag { display: inline-block; background: var(--primary-light, #eff6ff); color: var(--primary, #2563eb); font-weight: 700; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; }
+.item-pills-list { display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.3rem; align-items: flex-start; }
+.item-sub-pill { font-size: 0.7rem; background: var(--bg-body, #f8fafc); border: 1px solid var(--border-color, #e2e8f0); color: var(--text-muted, #64748b); padding: 0.1rem 0.4rem; border-radius: 4px; }
+.table-wrapper { overflow-x: auto; border: 1px solid var(--border-color, #e2e8f0); border-radius: 8px; }
+</style>
+<?php endif; ?>
 
 <div class="dashboard-container">
     <!-- Header -->
+    <?php if (!$is_embed): ?>
     <header class="header-bar">
         <div class="header-title-wrapper">
             <h2>Patient History Tracker</h2>
             <p>Comprehensive clinical encounter lookup and longitudinal patient record auditing.</p>
         </div>
         <?php if (!empty($_GET['name']) || !empty($_GET['patient'])): ?>
-            <a href="patient_history_full.php" class="btn-custom">⬅️ Back to Directory</a>
+            <a href="patient_history.php" class="btn-custom">⬅️ Back to Directory</a>
         <?php endif; ?>
     </header>
 
     <!-- Search Card with AJAX Autocomplete -->
     <section class="control-card">
-        <form class="filter-form" method="get" action="patient_history_full.php" id="searchForm" autocomplete="off">
+        <form class="filter-form" method="get" action="patient_history.php" id="searchForm" autocomplete="off">
             <label for="patient">Patient Name</label>
             <div class="autocomplete-wrapper">
                 <input type="text" name="patient" id="patient" class="modern-input" value="<?= h($patient_name) ?>" placeholder="Type patient name to search records..." required>
@@ -586,10 +627,11 @@ body {
             </div>
             <button type="submit" class="btn-custom btn-primary-custom">Search Records</button>
             <?php if ($patient_name): ?>
-                <a href="patient_history_full.php" class="btn-custom">Clear</a>
+                <a href="patient_history.php" class="btn-custom">Clear</a>
             <?php endif; ?>
         </form>
     </section>
+    <?php endif; ?>
 
     <?php if ($patient_name): 
         $stmt = $conn->prepare("
@@ -698,7 +740,7 @@ body {
         <section class="card-panel">
             <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; margin-bottom: 1rem;">
                 <h3 style="margin:0;">Visit History for <span style="color: var(--primary);"><?= h($patient_name) ?></span></h3>
-                <a href="?patient=<?= h(urlencode($patient_name)) ?>&export=csv" class="btn-custom"><span>📥</span> Export CSV</a>
+                <a href="?patient=<?= h(urlencode($patient_name)) ?>&export=csv" class="btn-custom"<?= $embed_link_attrs ?>><span>📥</span> Export CSV</a>
             </div>
 
             <?php if ($total_visits === 0): ?>
@@ -728,7 +770,7 @@ body {
                             ?>
                                 <tr>
                                     <td>
-                                        <a href="index.php?date=<?= h($r['record_date']) ?>" style="color: var(--primary); font-weight: 600; text-decoration: none;">
+                                        <a href="index.php?date=<?= h($r['record_date']) ?>" style="color: var(--primary); font-weight: 600; text-decoration: none;"<?= $embed_link_attrs ?>>
                                             📅 <?= h(date('M j, Y', strtotime($r['record_date']))) ?>
                                         </a>
                                     </td>
@@ -783,6 +825,7 @@ body {
         </section>
 
         <!-- Rapid Visit Timeline Panel -->
+        <?php if (!$is_embed): ?>
         <section class="card-panel visit-calendar-card">
             <h3>Rapid Visit Timeline</h3>
             <?php if ($distinct_dates === 0): ?>
@@ -790,31 +833,35 @@ body {
             <?php else: ?>
                 <div class="timeline-container">
                     <?php foreach (array_keys($dates_visited) as $dv): ?>
-                        <a href="index.php?date=<?= h($dv) ?>" class="visit-badge">
+                        <a href="index.php?date=<?= h($dv) ?>" class="visit-badge"<?= $embed_link_attrs ?>>
                             📅 <?= h(date('M j, Y', strtotime($dv))) ?>
                         </a>
                     <?php endforeach; ?>
                 </div>
             <?php endif; ?>
         </section>
+        <?php endif; ?>
 
         <?php $stmt->close(); ?>
 
     <?php else: ?>
         <section class="card-panel">
             <div class="empty-state">
-                Select a patient from the directory below or type a name above to generate their complete visit history, metrics, and records.
+                <?= $is_embed
+                    ? 'No visits recorded yet for this patient.'
+                    : 'Select a patient from the directory below or type a name above to generate their complete visit history, metrics, and records.' ?>
             </div>
         </section>
     <?php endif; ?>
 
     <!-- Patient Directory Section (Showing all patients encoded in the system sorted newest first) -->
+    <?php if (!$is_embed): ?>
     <section class="card-panel directory-card">
         <h3>Patient Directory (Latest Encounters First)</h3>
         <?php if ($all_patients_result && $all_patients_result->num_rows > 0): ?>
             <div class="patient-directory-grid">
                 <?php while ($pat = $all_patients_result->fetch_assoc()): ?>
-                    <a href="patient_history_full.php?patient=<?= h(urlencode($pat['patient_name'])) ?>" class="patient-directory-item">
+                    <a href="patient_history.php?patient=<?= h(urlencode($pat['patient_name'])) ?>" class="patient-directory-item">
                         <span class="name"><?= h($pat['patient_name']) ?></span>
                         <span class="meta">
                             <span>Visits: <strong><?= (int)$pat['visit_count'] ?></strong></span>
@@ -827,8 +874,10 @@ body {
             <div class="empty-state">No patients currently encoded in the database records.</div>
         <?php endif; ?>
     </section>
+    <?php endif; ?>
 </div>
 
+<?php if (!$is_embed): ?>
 <!-- AJAX Autocomplete & Keyboard Navigation Script -->
 <script>
 document.addEventListener('DOMContentLoaded', function() {
@@ -870,7 +919,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         debounceTimer = setTimeout(() => {
-            fetch(`patient_history_full.php?ajax_search=1&term=${encodeURIComponent(query)}`)
+            fetch(`patient_history.php?ajax_search=1&term=${encodeURIComponent(query)}`)
                 .then(response => response.json())
                 .then(data => {
                     dropdown.innerHTML = '';
@@ -935,5 +984,6 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 </script>
+<?php endif; ?>
 
-<?php include 'includes/footer.php'; ?>
+<?php if (!$is_embed) include 'includes/footer.php'; ?>

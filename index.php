@@ -441,11 +441,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $has_labs = isset($_POST['has_labs']) ? 1 : 0;
         $has_gamot_meds = isset($_POST['has_gamot_meds']) ? 1 : 0;
 
-        // Any selected service (Meds/Labs/Gamot) is a Consultation.
-        // The rule is enforced server-side so it cannot be bypassed by
-        // manually submitting the form.
+        // Checking a service (Meds/Labs/Gamot) nudges the visit type to
+        // Consultation, but only as a DEFAULT — it does not overwrite a
+        // consultation-type value the user already picked. The one thing
+        // still enforced server-side is that a service can't be attached
+        // to an FPE/intake-type visit; that part can't be bypassed.
         $has_consultation_service = ($has_meds || $has_labs || $has_gamot_meds);
-        if ($has_consultation_service) {
+        if ($has_consultation_service && is_fpe_meds_type($conn, $meds_type_id)) {
             $consultation_type_id = get_consultation_meds_type_id($conn);
             if ($consultation_type_id !== null) {
                 $meds_type_id = $consultation_type_id;
@@ -516,9 +518,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $has_gamot_meds = isset($_POST['has_gamot_meds']) ? 1 : 0;
         $record_date = $_POST['record_date'] ?? '';
 
-        // Any selected service means this edited record is a Consultation.
+        // Same rule as on add: a checked service defaults the visit type to
+        // Consultation only when it isn't already a consultation-type — a
+        // manually-picked consultation type is left as the user set it.
         $has_consultation_service = ($has_meds || $has_labs || $has_gamot_meds);
-        if ($has_consultation_service) {
+        if ($has_consultation_service && is_fpe_meds_type($conn, $meds_type_id)) {
             $consultation_type_id = get_consultation_meds_type_id($conn);
             if ($consultation_type_id !== null) {
                 $meds_type_id = $consultation_type_id;
@@ -2082,12 +2086,17 @@ function syncConsultationRequirements(form) {
 
     const hasServices = formHasConsultationServices(form);
 
-    // Checking Meds, Labs, or Gamot automatically changes the visit to Consultation.
+    // Checking Meds, Labs, or Gamot nudges the visit type to Consultation —
+    // but only as a default. If the field is already on some consultation-
+    // type option (whether auto-set earlier or picked manually), leave it
+    // alone so the user can still edit it freely.
     if (hasServices) {
-        const consultationOption = getConsultationOption(medsType);
-        if (consultationOption) {
-            medsType.value = consultationOption.value;
-            medsType.dataset.autoConsultation = '1';
+        if (!isConsultationSelection(medsType)) {
+            const consultationOption = getConsultationOption(medsType);
+            if (consultationOption) {
+                medsType.value = consultationOption.value;
+                medsType.dataset.autoConsultation = '1';
+            }
         }
     } else if (medsType.dataset.autoConsultation === '1') {
         // Once all service checkboxes are cleared, allow the user to choose the visit type again.
@@ -2138,11 +2147,17 @@ document.addEventListener('DOMContentLoaded', function() {
         select.addEventListener('change', function() {
             const form = select.form;
             if (!form) return;
-            // If a service is checked, the visit must stay Consultation.
-            if (formHasConsultationServices(form)) {
+            // A manual choice is respected as-is, as long as it's a
+            // consultation-type option. Only nudge it back to Consultation
+            // if the user picked an FPE/intake type while a service is
+            // still checked (services can't attach to an FPE visit).
+            if (formHasConsultationServices(form) && !isConsultationSelection(select)) {
                 const consultationOption = getConsultationOption(select);
                 if (consultationOption) select.value = consultationOption.value;
             }
+            // This was a manual edit, not an auto-fill — don't treat it as
+            // something to auto-clear later when checkboxes are unchecked.
+            delete select.dataset.autoConsultation;
             syncConsultationRequirements(form);
         });
     });
@@ -2231,7 +2246,7 @@ function openPatientHistory(patientName) {
 
     body.innerHTML = '<div class="ph-loading"><div class="ph-spinner"></div><p>Loading history…</p></div>';
 
-    fetch('patient_history.php?patient_name=' + encodeURIComponent(patientName))
+    fetch('patient_history.php?embed=1&patient_name=' + encodeURIComponent(patientName))
         .then(response => {
             if (!response.ok) throw new Error('Network error');
             return response.text();
@@ -2252,7 +2267,7 @@ function openPatientHistory(patientName) {
             try {
                 const parsed = new DOMParser().parseFromString(trimmed, 'text/html');
                 if (parsed && parsed.body) {
-                    parsed.body.querySelectorAll('script, style, link[rel="stylesheet"], header, nav').forEach(el => el.remove());
+                    parsed.body.querySelectorAll('script, header, nav').forEach(el => el.remove());
                     fragment = parsed.body.innerHTML.trim() || fragment;
                 }
             } catch (e) { /* fall back to raw html if parsing fails */ }
@@ -2264,14 +2279,15 @@ function openPatientHistory(patientName) {
         });
 }
 
-// Any link rendered inside the history panel (e.g. a stray "back to
-// dashboard" link from patient_history.php) should never navigate the whole
-// app away — this is a read-only overlay, not a page.
+// Any same-tab link rendered inside the history panel should never navigate
+// the whole app away — this is a read-only overlay, not a page. Links the
+// fragment deliberately marks target="_blank" (CSV export, jump-to-date)
+// are left alone so they open safely in a new tab instead.
 document.addEventListener('click', function (e) {
     const body = document.getElementById('patient-history-body');
     if (!body || !body.contains(e.target)) return;
     const link = e.target.closest('a[href]');
-    if (link) e.preventDefault();
+    if (link && link.target !== '_blank') e.preventDefault();
 });
 
 function closePatientHistory() {
