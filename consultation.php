@@ -1,135 +1,285 @@
 <?php
 /**
  * YAKAP GAMOT SYSTEM - Consultation Summary (consultation.php)
+ *
+ * FULL-PAGE REVIEW VERSION
+ * Structure: 1) config/auth  2) helpers  3) CSV export handler
+ *            4) input validation  5) database queries  6) calculations
+ *            7) HTML/CSS/JS
+ *
+ * See the accompanying audit notes for a full list of what changed and why.
  */
 
 require_once 'config.php';
 require_once 'includes/auth.php';
 
-// --- CONFIGURABLE RATES ---
+// =====================================================================
+// 1. CONFIGURATION
+// =====================================================================
 $fpe_gross_rate = 680.00;
 
-// --- 1. CSV EXPORT HANDLER ---
+// Set by safe_query() if any database call fails, so the page can show
+// one clear banner instead of crashing or silently displaying wrong
+// financial totals. Never holds raw SQL or driver error text — those go
+// to error_log() only.
+$db_error = null;
+
+// =====================================================================
+// 2. HELPERS
+// =====================================================================
+
+/**
+ * Validate and normalize a start/end date pair.
+ * - Falls back to the current month if either date is missing/unparseable.
+ * - Swaps start/end if start_date is after end_date (Case 8).
+ * - Never throws; always returns two valid 'Y-m-d' strings.
+ */
+function normalize_date_range($start_raw, $end_raw) {
+    $default_start = date('Y-m-01');
+    $default_end   = date('Y-m-t');
+
+    $start_ts = $start_raw ? strtotime($start_raw) : false;
+    $end_ts   = $end_raw   ? strtotime($end_raw)   : false;
+
+    if ($start_ts === false || $end_ts === false) {
+        return [$default_start, $default_end];
+    }
+
+    $start = date('Y-m-d', $start_ts);
+    $end   = date('Y-m-d', $end_ts);
+
+    if ($start > $end) {
+        [$start, $end] = [$end, $start]; // swap rather than discard
+    }
+
+    return [$start, $end];
+}
+
+/**
+ * Exclusive end-of-day boundary for date-range WHERE clauses. Using
+ * `record_date >= start AND record_date < end + 1 day` (instead of
+ * BETWEEN start AND end) guarantees every record on the end date is
+ * included even when record_date is a DATETIME/TIMESTAMP with a time
+ * component (Case 7). For a plain DATE column this is equivalent to the
+ * old BETWEEN behavior, so it is safe either way.
+ */
+function next_day($date_str) {
+    return date('Y-m-d', strtotime($date_str . ' +1 day'));
+}
+
+/**
+ * Prepare, bind, and execute a query, degrading gracefully on failure
+ * instead of a fatal error or a misleading ₱0.00 with no explanation.
+ * Technical details go to error_log(); the user only ever sees a generic
+ * banner (set via the $db_error global).
+ *
+ * @return mysqli_stmt|null  null on failure — callers must treat that as
+ *                            "no rows" and skip $stmt->close().
+ */
+function safe_query($conn, $sql, $types = '', $params = []) {
+    global $db_error;
+
+    $stmt = $conn->prepare($sql);
+    if ($stmt === false) {
+        error_log('consultation.php prepare() failed: ' . $conn->error);
+        $db_error = 'A database error occurred while loading this report. Please try again in a moment.';
+        return null;
+    }
+
+    if ($types !== '' && !empty($params)) {
+        $stmt->bind_param($types, ...$params);
+    }
+
+    if (!$stmt->execute()) {
+        error_log('consultation.php execute() failed: ' . $stmt->error);
+        $db_error = 'A database error occurred while loading this report. Please try again in a moment.';
+        $stmt->close();
+        return null;
+    }
+
+    return $stmt;
+}
+
+// =====================================================================
+// 3. CSV EXPORT HANDLER
+// =====================================================================
 if (isset($_GET['export']) && $_GET['export'] === 'csv') {
-    $start_date = $_GET['start_date'] ?? date('Y-m-01');
-    $end_date   = $_GET['end_date']   ?? date('Y-m-t');
-    
-    $stmt = $conn->prepare("
-        SELECT 
-            p.physician_name, 
+    [$start_date, $end_date] = normalize_date_range($_GET['start_date'] ?? null, $_GET['end_date'] ?? null);
+    $end_date_exclusive = next_day($end_date);
+
+    // NOTE (fix): the earnings column used to be SUM(p.consultation_rate).
+    // A LEFT JOIN produces exactly one row for a physician with zero
+    // matching daily_records (dr.* all NULL, but p.consultation_rate still
+    // populated), so SUM(rate) returned that physician's full rate even at
+    // 0 patients. COUNT(dr.record_id) * p.consultation_rate is correct in
+    // every case and matches the dashboard/table formula (Case 5, Sec. 2/16).
+    $stmt = safe_query($conn, "
+        SELECT
+            p.physician_name,
             p.consultation_rate,
-            COUNT(dr.record_id) AS patient_count, 
-            SUM(p.consultation_rate) AS total_earnings 
-        FROM physicians p 
-        LEFT JOIN daily_records dr ON p.physician_id = dr.physician_id AND dr.record_date BETWEEN ? AND ? 
-        GROUP BY p.physician_id 
+            COUNT(dr.record_id) AS record_count,
+            (COUNT(dr.record_id) * p.consultation_rate) AS total_earnings
+        FROM physicians p
+        LEFT JOIN daily_records dr
+            ON p.physician_id = dr.physician_id
+            AND dr.record_date >= ? AND dr.record_date < ?
+        GROUP BY p.physician_id
         ORDER BY p.physician_name
-    ");
-    $stmt->bind_param("ss", $start_date, $end_date);
-    $stmt->execute();
+    ", "ss", [$start_date, $end_date_exclusive]);
+
+    if ($stmt === null) {
+        // Do not export a spreadsheet full of misleading zeros if the
+        // query itself failed.
+        header('Content-Type: text/plain; charset=utf-8');
+        header('Content-Disposition: attachment; filename="export_error.txt"');
+        echo "Export failed due to a database error. Please try again, or contact support if this continues.\n";
+        exit;
+    }
+
     $result = $stmt->get_result();
-    
-    $rows = []; 
-    $grand_patients = 0; 
-    $grand_earnings = 0;
-    
-    while ($row = $result->fetch_assoc()) { 
+    $rows = [];
+    $grand_records = 0;
+    $grand_earnings = 0.00;
+
+    while ($row = $result->fetch_assoc()) {
         $doc_rate = (float)$row['consultation_rate'];
         $doc_earnings = (float)$row['total_earnings'];
         $rows[] = [
             'physician_name' => $row['physician_name'],
-            'patient_count'  => $row['patient_count'],
+            'record_count'   => $row['record_count'],
             'rate'           => '₱' . number_format($doc_rate, 2),
             'total_earnings' => '₱' . number_format($doc_earnings, 2)
         ];
-        $grand_patients += (int)$row['patient_count']; 
-        $grand_earnings += $doc_earnings; 
+        $grand_records  += (int)$row['record_count'];
+        $grand_earnings += $doc_earnings;
     }
-    
+
     $rows[] = [
-        'physician_name' => 'GRAND TOTAL', 
-        'patient_count'  => $grand_patients, 
-        'rate'           => '', 
+        'physician_name' => 'GRAND TOTAL',
+        'record_count'   => $grand_records,
+        'rate'           => '',
         'total_earnings' => '₱' . number_format($grand_earnings, 2)
     ];
-    
-    export_csv('doctor_consultation_earnings_' . $start_date . '_to_' . $end_date . '.csv', ['Physician Name', 'Consulted Patients', 'Doctor Fee Rate', 'Total Earnings'], $rows);
+
+    // Column label matches what is actually counted — consultation
+    // records, not verified-unique patients (Sec. 6).
+    export_csv(
+        'doctor_consultation_earnings_' . $start_date . '_to_' . $end_date . '.csv',
+        ['Physician Name', 'Consultation Records', 'Doctor Fee Rate', 'Total Earnings'],
+        $rows
+    );
     $stmt->close();
     exit;
 }
 
-// --- 2. DATE FILTER & QUERY PREPARATION ---
-$start_date = $_GET['start_date'] ?? date('Y-m-01');
-$end_date   = $_GET['end_date']   ?? date('Y-m-t');
+// =====================================================================
+// 4. INPUT VALIDATION
+// =====================================================================
+[$start_date, $end_date] = normalize_date_range($_GET['start_date'] ?? null, $_GET['end_date'] ?? null);
+$end_date_exclusive = next_day($end_date);
+$date_range_was_adjusted = (
+    ($_GET['start_date'] ?? '') !== $start_date ||
+    ($_GET['end_date'] ?? '') !== $end_date
+) && (isset($_GET['start_date']) || isset($_GET['end_date']));
 
-// Fetch Physician Consultation Records & Dynamic Individual Rates
-$stmt = $conn->prepare("
-    SELECT 
-        p.physician_id, 
-        p.physician_name, 
+// =====================================================================
+// 5. DATABASE QUERIES
+// =====================================================================
+
+// Physician consultation records & individual rates.
+$stmt = safe_query($conn, "
+    SELECT
+        p.physician_id,
+        p.physician_name,
         p.consultation_rate,
-        p.is_active, 
-        COUNT(dr.record_id) AS patient_count 
-    FROM physicians p 
-    LEFT JOIN daily_records dr ON p.physician_id = dr.physician_id AND dr.record_date BETWEEN ? AND ? 
-    GROUP BY p.physician_id 
+        p.is_active,
+        COUNT(dr.record_id) AS record_count
+    FROM physicians p
+    LEFT JOIN daily_records dr
+        ON p.physician_id = dr.physician_id
+        AND dr.record_date >= ? AND dr.record_date < ?
+    GROUP BY p.physician_id
     ORDER BY p.is_active DESC, p.physician_name
-");
-$stmt->bind_param("ss", $start_date, $end_date);
-$stmt->execute();
-$physicians_result = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
-$stmt->close();
+", "ss", [$start_date, $end_date_exclusive]);
+$physicians_result = $stmt ? $stmt->get_result()->fetch_all(MYSQLI_ASSOC) : [];
+if ($stmt) $stmt->close();
 
-// Fetch Overall Counts (Total Records — ALL visit types in range)
-$overall_stmt = $conn->prepare("SELECT COUNT(*) AS overall_count FROM daily_records WHERE record_date BETWEEN ? AND ?");
-$overall_stmt->bind_param("ss", $start_date, $end_date);
-$overall_stmt->execute();
-$overall_count = (int)$overall_stmt->get_result()->fetch_assoc()['overall_count'];
-$overall_stmt->close();
+// Overall consultation record count (all visit types in range).
+$stmt = safe_query($conn,
+    "SELECT COUNT(*) AS overall_count FROM daily_records WHERE record_date >= ? AND record_date < ?",
+    "ss", [$start_date, $end_date_exclusive]
+);
+$overall_count = $stmt ? (int)$stmt->get_result()->fetch_assoc()['overall_count'] : 0;
+if ($stmt) $stmt->close();
 
-// Fetch FPE Count (Robust fallback: counts all records in date range if strict flags return 0)
-$fpe_stmt = $conn->prepare("
-    SELECT COUNT(*) AS fpe_count
-    FROM daily_records dr
-    LEFT JOIN meds_types mt ON dr.meds_type_id = mt.meds_type_id
-    WHERE dr.record_date BETWEEN ? AND ?
-");
-$fpe_stmt->bind_param("ss", $start_date, $end_date);
-$fpe_stmt->execute();
-$fpe_patient_count = (int)$fpe_stmt->get_result()->fetch_assoc()['fpe_count'];
-$fpe_stmt->close();
-
-// Compute Total Doctor's Fees dynamically based on each physician's custom rate
-$total_doctors_fees = 0.00;
-$consulted_count = 0;
-foreach ($physicians_result as $doc) {
-    $p_count = (int)$doc['patient_count'];
-    $p_rate  = (float)$doc['consultation_rate'];
-    $consulted_count += $p_count;
-    
-    $effective_rate = ($p_rate > 0) ? $p_rate : 0.00;
-    $total_doctors_fees += ($p_count * $effective_rate);
-}
-
-// Financial Calculations per Business Logic
-$gross_fpe_value = $fpe_patient_count * $fpe_gross_rate;
-$net_fpe_fund = $gross_fpe_value - $total_doctors_fees;
-
-// Fetch Meds Breakdown
-$meds_breakdown = $conn->prepare("
-    SELECT 
-        mt.meds_type_name, 
-        mt.is_consultation, 
-        COUNT(dr.record_id) AS cnt 
-    FROM meds_types mt 
-    LEFT JOIN daily_records dr ON mt.meds_type_id = dr.meds_type_id AND dr.record_date BETWEEN ? AND ? 
-    GROUP BY mt.meds_type_id 
+// Medicine type breakdown.
+$stmt = safe_query($conn, "
+    SELECT
+        mt.meds_type_name,
+        mt.is_consultation,
+        COUNT(dr.record_id) AS cnt
+    FROM meds_types mt
+    LEFT JOIN daily_records dr
+        ON mt.meds_type_id = dr.meds_type_id
+        AND dr.record_date >= ? AND dr.record_date < ?
+    GROUP BY mt.meds_type_id
     ORDER BY cnt DESC
-");
-$meds_breakdown->bind_param("ss", $start_date, $end_date);
-$meds_breakdown->execute();
-$meds_result = $meds_breakdown->get_result()->fetch_all(MYSQLI_ASSOC);
-$meds_breakdown->close();
+", "ss", [$start_date, $end_date_exclusive]);
+$meds_result = $stmt ? $stmt->get_result()->fetch_all(MYSQLI_ASSOC) : [];
+if ($stmt) $stmt->close();
+
+// =====================================================================
+// 6. CALCULATIONS (single authoritative pass — reused everywhere below)
+// =====================================================================
+
+// -- Physician earnings --------------------------------------------------
+// Computed once here and stored back onto each row, so the KPI card, the
+// physician table, its grand total, and the CSV export can never disagree
+// (Sec. 2, 8, 16, 28).
+$total_doctors_fees     = 0.00;
+$grand_consult_records  = 0;
+
+foreach ($physicians_result as &$doc) {
+    $p_count = (int)$doc['record_count'];
+    $p_rate  = (float)$doc['consultation_rate'];
+
+    // A configured rate <= 0 (including missing/NULL, which casts to 0.0)
+    // yields ₱0 earnings rather than silently substituting another rate.
+    // Whether a rate of exactly 0 is "valid" vs. "not yet configured" is a
+    // business-rule question — see audit notes (Sec. 25).
+    $effective_rate = ($p_rate > 0) ? $p_rate : 0.00;
+    $doc_earnings   = $p_count * $effective_rate;
+
+    $doc['earnings'] = $doc_earnings; // reused by the table markup below
+
+    $grand_consult_records += $p_count;
+    $total_doctors_fees    += $doc_earnings;
+}
+unset($doc);
+
+// -- FPE (see "Business-rule assumptions" in the audit notes) ------------
+// The original query joined meds_types but never filtered on it, so it
+// counted exactly the same population as $overall_count while doing extra,
+// pointless work. Rather than inventing an eligibility rule (e.g. "only a
+// specific meds_type"), this preserves the previously-observed behavior —
+// every daily_records row in range is treated as FPE-eligible — but
+// removes the redundant duplicate query. If FPE eligibility should exclude
+// certain meds types or record kinds, that filter needs to be added here
+// once the rule is confirmed.
+$fpe_patient_count = $overall_count;
+
+$gross_fpe_value = $fpe_patient_count * $fpe_gross_rate;
+$net_fpe_fund     = $gross_fpe_value - $total_doctors_fees;
+
+// -- Medicine breakdown percentages ---------------------------------------
+// Denominator is the sum of the rows actually shown in this table, not a
+// separately-queried $overall_count — so the percentages always reconcile
+// with what's on screen even if some daily_records rows have a meds_type_id
+// that doesn't match any meds_types row (Sec. 6/13/15, Case 10).
+$meds_breakdown_total = 0;
+foreach ($meds_result as $mb) {
+    $meds_breakdown_total += (int)$mb['cnt'];
+}
 
 include 'includes/header.php';
 ?>
@@ -148,6 +298,7 @@ include 'includes/header.php';
     --success: #059669;
     --danger: #dc2626;
     --warning: #d97706;
+    --info: #2563eb;
     --radius-sm: 6px;
     --radius-md: 10px;
     --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
@@ -165,6 +316,7 @@ body {
     max-width: 1300px;
     margin: 0 auto;
     padding: 1.5rem 1rem;
+    position: relative;
 }
 
 /* Header & Actions */
@@ -197,7 +349,7 @@ body {
     align-items: center;
 }
 
-/* Modern Minimalist Buttons */
+/* Buttons */
 .btn-custom {
     display: inline-flex;
     align-items: center;
@@ -212,25 +364,38 @@ body {
     cursor: pointer;
     transition: all 0.15s ease;
     text-decoration: none;
+    font-family: inherit;
 }
 
-.btn-custom:hover {
-    background: #f1f5f9;
-    border-color: #cbd5e1;
+.btn-custom:hover { background: #f1f5f9; border-color: #cbd5e1; }
+.btn-custom:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
 }
+.btn-custom:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .btn-custom.btn-primary-custom {
     background: var(--primary);
     color: white;
     border-color: var(--primary);
 }
+.btn-custom.btn-primary-custom:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
 
-.btn-custom.btn-primary-custom:hover {
-    background: var(--primary-hover);
-    border-color: var(--primary-hover);
+/* Alert banner (DB errors, adjusted-range notice) */
+.alert-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius-md);
+    font-size: 0.875rem;
+    margin-bottom: 1rem;
+    border: 1px solid transparent;
 }
+.alert-banner.alert-danger { background: #fef2f2; color: #991b1b; border-color: #fecaca; }
+.alert-banner.alert-info { background: #eff6ff; color: #1e40af; border-color: #bfdbfe; }
 
-/* Filter Section Card */
+/* Filter Card */
 .filter-card {
     background: var(--bg-card);
     border: 1px solid var(--border-subtle);
@@ -247,17 +412,8 @@ body {
     flex-wrap: wrap;
 }
 
-.filter-group {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-.filter-group label {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--text-secondary);
-}
+.filter-group { display: flex; align-items: center; gap: 0.5rem; }
+.filter-group label { font-size: 0.85rem; font-weight: 600; color: var(--text-secondary); }
 
 .filter-group input[type="date"] {
     padding: 0.45rem 0.65rem;
@@ -269,29 +425,22 @@ body {
     outline: none;
     transition: border-color 0.15s;
 }
-
 .filter-group input[type="date"]:focus {
     border-color: var(--primary);
     box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.1);
 }
 
-.preset-links {
-    display: flex;
-    gap: 0.5rem;
-    margin-left: auto;
-}
+.preset-links { display: flex; gap: 0.5rem; margin-left: auto; flex-wrap: wrap; }
 
 @media (max-width: 768px) {
-    .preset-links {
-        margin-left: 0;
-        width: 100%;
-    }
+    .preset-links { margin-left: 0; width: 100%; }
+    .filter-form-grid { gap: 0.75rem; }
 }
 
-/* KPI Summary Cards Grid */
+/* KPI Cards */
 .kpi-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 1rem;
     margin-bottom: 1.5rem;
 }
@@ -309,17 +458,15 @@ body {
 .kpi-card::before {
     content: "";
     position: absolute;
-    top: 0;
-    left: 0;
-    width: 4px;
-    height: 100%;
+    top: 0; left: 0;
+    width: 4px; height: 100%;
     background: var(--border-subtle);
 }
-
 .kpi-card.accent-primary::before { background: var(--primary); }
 .kpi-card.accent-warning::before { background: var(--warning); }
 .kpi-card.accent-success::before { background: var(--success); }
 .kpi-card.accent-neutral::before { background: var(--text-secondary); }
+.kpi-card.accent-info::before { background: var(--info); }
 
 .kpi-card .kpi-title {
     font-size: 0.75rem;
@@ -328,31 +475,19 @@ body {
     color: var(--text-secondary);
     letter-spacing: 0.04em;
 }
-
 .kpi-card .kpi-value {
-    font-size: 1.5rem;
+    font-size: 1.4rem;
     font-weight: 700;
     color: var(--text-primary);
     margin-top: 0.35rem;
     letter-spacing: -0.02em;
+    word-break: break-word;
 }
+.kpi-card .kpi-subtext { font-size: 0.775rem; color: var(--text-secondary); margin-top: 0.25rem; }
 
-.kpi-card .kpi-subtext {
-    font-size: 0.775rem;
-    color: var(--text-secondary);
-    margin-top: 0.25rem;
-}
-
-/* Layout Content Grid */
-.content-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1.5rem;
-}
-
-@media (max-width: 1024px) {
-    .content-grid { grid-template-columns: 1fr; }
-}
+/* Layout */
+.content-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+@media (max-width: 1024px) { .content-grid { grid-template-columns: 1fr; } }
 
 .card-panel {
     background: var(--bg-card);
@@ -362,30 +497,21 @@ body {
     box-shadow: var(--shadow-sm);
     margin-bottom: 1.5rem;
 }
-
 .card-panel h3 {
     font-size: 1rem;
     font-weight: 600;
     color: var(--text-primary);
-    margin-top: 0;
-    margin-bottom: 1rem;
+    margin: 0 0 1rem 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.35rem;
 }
 
-/* Modern Professional Tables */
-.table-responsive {
-    overflow-x: auto;
-}
-
-.modern-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.875rem;
-    text-align: left;
-}
-
+/* Tables */
+.table-responsive { overflow-x: auto; }
+.modern-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; text-align: left; min-width: 420px; }
 .modern-table th {
     background: #f8fafc;
     padding: 0.75rem;
@@ -394,25 +520,14 @@ body {
     border-bottom: 1px solid var(--border-subtle);
     letter-spacing: -0.01em;
 }
+.modern-table td { padding: 0.75rem; border-bottom: 1px solid var(--border-subtle); color: var(--text-primary); vertical-align: middle; }
+.modern-table tbody tr:hover { background-color: #f8fafc; }
+.modern-table tfoot td { background: #f8fafc; font-weight: 700; border-top: 2px solid var(--border-subtle); }
 
-.modern-table td {
-    padding: 0.75rem;
-    border-bottom: 1px solid var(--border-subtle);
-    color: var(--text-primary);
-    vertical-align: middle;
-}
+.empty-state { text-align: center; color: var(--text-secondary); padding: 2rem 1rem; }
+.empty-state .empty-icon { font-size: 1.5rem; display: block; margin-bottom: 0.4rem; }
 
-.modern-table tbody tr:hover {
-    background-color: #f8fafc;
-}
-
-.modern-table tfoot td {
-    background: #f8fafc;
-    font-weight: 700;
-    border-top: 2px solid var(--border-subtle);
-}
-
-/* Status Badges */
+/* Badges */
 .badge-tag {
     display: inline-flex;
     align-items: center;
@@ -423,29 +538,56 @@ body {
     margin-left: 0.35rem;
     letter-spacing: 0.02em;
 }
-
 .badge-success { background: #d1fae5; color: #065f46; }
 .badge-danger { background: #fee2e2; color: #991b1b; }
 .badge-inactive { background: #f1f5f9; color: #64748b; border: 1px solid #cbd5e1; }
 
-/* Progress Bar */
-.progress-track {
-    background: #f1f5f9;
-    height: 6px;
-    width: 100%;
-    border-radius: 3px;
-    overflow: hidden;
-    margin-top: 4px;
-}
+/* Progress bar */
+.progress-track { background: #f1f5f9; height: 6px; width: 100%; border-radius: 3px; overflow: hidden; margin-top: 4px; }
+.progress-bar { background: var(--primary); height: 100%; border-radius: 3px; }
 
-.progress-bar {
-    background: var(--primary);
-    height: 100%;
-    border-radius: 3px;
+/* Loading overlay (shown briefly during full-page navigations) */
+.page-loading-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(248, 250, 252, 0.75);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+.page-loading-overlay.is-visible { display: flex; }
+.page-loading-spinner {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 0.75rem 1.1rem;
+    box-shadow: var(--shadow-md);
+    font-size: 0.875rem;
+    color: var(--text-primary);
+}
+.spinner-ring {
+    width: 16px; height: 16px;
+    border: 2px solid var(--border-subtle);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.sr-only {
+    position: absolute;
+    width: 1px; height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
 }
 
 @media print {
-    .header-actions, .filter-card { display: none !important; }
+    .header-actions, .filter-card, .page-loading-overlay { display: none !important; }
     .content-grid { grid-template-columns: 1fr; }
     body { background: white; }
     .card-panel { border: none; box-shadow: none; padding: 0; }
@@ -453,6 +595,15 @@ body {
 </style>
 
 <div class="dashboard-container">
+
+    <!-- Loading overlay for full-page navigations (filter apply / export / presets) -->
+    <div class="page-loading-overlay" id="pageLoadingOverlay" role="status" aria-live="polite">
+        <div class="page-loading-spinner">
+            <span class="spinner-ring" aria-hidden="true"></span>
+            <span>Loading report…</span>
+        </div>
+    </div>
+
     <!-- Header Controls -->
     <header class="header-bar">
         <div class="header-title-wrapper">
@@ -460,18 +611,31 @@ body {
             <p>Overview of clinical encounters, physician compensation metrics, and fund balances.</p>
         </div>
         <div class="header-actions">
-            <a href="?start_date=<?= h($start_date) ?>&end_date=<?= h($end_date) ?>&export=csv" class="btn-custom">
-                <span>📥</span> Export CSV
+            <a href="?start_date=<?= h($start_date) ?>&end_date=<?= h($end_date) ?>&export=csv"
+               class="btn-custom" id="exportCsvLink">
+                <span aria-hidden="true">📥</span> Export CSV
             </a>
-            <button onclick="window.print()" class="btn-custom">
-                <span>🖨️</span> Print Report
+            <button type="button" onclick="window.print()" class="btn-custom">
+                <span aria-hidden="true">🖨️</span> Print Report
             </button>
         </div>
     </header>
 
+    <?php if ($db_error): ?>
+        <div class="alert-banner alert-danger" role="alert">
+            <span aria-hidden="true">⚠️</span>
+            <span><?= h($db_error) ?></span>
+        </div>
+    <?php elseif ($date_range_was_adjusted): ?>
+        <div class="alert-banner alert-info" role="status">
+            <span aria-hidden="true">ℹ️</span>
+            <span>The date range you provided wasn't valid, so it was adjusted to <?= h($start_date) ?> – <?= h($end_date) ?>.</span>
+        </div>
+    <?php endif; ?>
+
     <!-- Date Range Filter -->
     <section class="filter-card">
-        <form class="filter-form-grid" method="get" action="consultation.php">
+        <form class="filter-form-grid" method="get" action="consultation.php" id="filterForm">
             <div class="filter-group">
                 <label for="start_date">From</label>
                 <input type="date" id="start_date" name="start_date" value="<?= h($start_date) ?>">
@@ -482,36 +646,42 @@ body {
                 <input type="date" id="end_date" name="end_date" value="<?= h($end_date) ?>">
             </div>
 
-            <button type="submit" class="btn-custom btn-primary-custom">Apply Filter</button>
-            
+            <button type="submit" class="btn-custom btn-primary-custom" id="applyFilterBtn">Apply Filter</button>
+
             <div class="preset-links">
-                <a href="consultation.php?start_date=<?= date('Y-m-01') ?>&end_date=<?= date('Y-m-t') ?>" class="btn-custom" style="padding: 0.4rem 0.65rem; font-size: 0.8rem;">This Month</a>
-                <a href="consultation.php?start_date=<?= date('Y-m-01', strtotime('-1 month')) ?>&end_date=<?= date('Y-m-t', strtotime('-1 month')) ?>" class="btn-custom" style="padding: 0.4rem 0.65rem; font-size: 0.8rem;">Last Month</a>
+                <a href="consultation.php?start_date=<?= date('Y-m-01') ?>&end_date=<?= date('Y-m-t') ?>" class="btn-custom preset-link" style="padding: 0.4rem 0.65rem; font-size: 0.8rem;">This Month</a>
+                <a href="consultation.php?start_date=<?= date('Y-m-01', strtotime('-1 month')) ?>&end_date=<?= date('Y-m-t', strtotime('-1 month')) ?>" class="btn-custom preset-link" style="padding: 0.4rem 0.65rem; font-size: 0.8rem;">Last Month</a>
+                <a href="consultation.php?start_date=<?= date('Y-m-d') ?>&end_date=<?= date('Y-m-d') ?>" class="btn-custom preset-link" style="padding: 0.4rem 0.65rem; font-size: 0.8rem;">Today</a>
             </div>
         </form>
     </section>
 
-    <!-- KPI Summary Metrics -->
-    <section class="kpi-grid">
+    <!-- KPI Summary Metrics (Overview) -->
+    <section class="kpi-grid" aria-label="Overview">
+        <div class="kpi-card accent-neutral">
+            <div class="kpi-title">Total Consultation Records</div>
+            <div class="kpi-value"><?= number_format($overall_count) ?></div>
+            <div class="kpi-subtext">All daily records in range (not verified-unique patients)</div>
+        </div>
+        <div class="kpi-card accent-info">
+            <div class="kpi-title">FPE Records</div>
+            <div class="kpi-value"><?= number_format($fpe_patient_count) ?></div>
+            <div class="kpi-subtext">Currently equal to total records — see note below</div>
+        </div>
         <div class="kpi-card accent-primary">
             <div class="kpi-title">Gross FPE Value</div>
             <div class="kpi-value">₱<?= number_format($gross_fpe_value, 2) ?></div>
-            <div class="kpi-subtext"><?= number_format($fpe_patient_count) ?> Patients × ₱<?= number_format($fpe_gross_rate, 0) ?></div>
+            <div class="kpi-subtext"><?= number_format($fpe_patient_count) ?> × ₱<?= number_format($fpe_gross_rate, 0) ?></div>
         </div>
         <div class="kpi-card accent-warning">
             <div class="kpi-title">Total Doctor's Fees</div>
             <div class="kpi-value">₱<?= number_format($total_doctors_fees, 2) ?></div>
-            <div class="kpi-subtext">Aggregated via individual physician rates</div>
+            <div class="kpi-subtext">Sum of each physician's own rate × their records</div>
         </div>
         <div class="kpi-card accent-success">
             <div class="kpi-title">Net FPE Fund</div>
             <div class="kpi-value">₱<?= number_format($net_fpe_fund, 2) ?></div>
             <div class="kpi-subtext">Gross FPE − Total Doctor's Fees</div>
-        </div>
-        <div class="kpi-card accent-neutral">
-            <div class="kpi-title">Patient Records Count</div>
-            <div class="kpi-value"><?= number_format($fpe_patient_count) ?></div>
-            <div class="kpi-subtext">Total Encounters in Range</div>
         </div>
     </section>
 
@@ -522,35 +692,37 @@ body {
             <h3><span>Doctor Consultation Summary</span> <span style="font-size: 0.75rem; font-weight: normal; color: var(--text-secondary);">Configurable Rates</span></h3>
             <div class="table-responsive">
                 <table class="modern-table">
+                    <caption class="sr-only">Physician consultation counts, rates, and earnings for the selected date range</caption>
                     <thead>
                         <tr>
-                            <th>Doctor Name</th>
-                            <th style="text-align: center;">Patients</th>
-                            <th style="text-align: right;">Rate</th>
-                            <th style="text-align: right;">Total Earnings</th>
+                            <th scope="col">Doctor Name</th>
+                            <th scope="col" style="text-align: center;">Consultations</th>
+                            <th scope="col" style="text-align: right;">Rate</th>
+                            <th scope="col" style="text-align: right;">Total Earnings</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php 
-                        $grand_consult_patients = 0;
-                        $grand_total_earnings = 0.00;
-                        if (empty($physicians_result)): 
-                        ?>
-                            <tr><td colspan="4" style="text-align:center; color: var(--text-secondary); padding: 2rem;">No clinical consultation records found for this period.</td></tr>
-                        <?php else: foreach ($physicians_result as $row): 
-                            $doc_patients = (int)$row['patient_count'];
-                            $doc_rate = (float)$row['consultation_rate'];
-                            $doc_earnings = $doc_patients * $doc_rate;
-                            
-                            $grand_consult_patients += $doc_patients;
-                            $grand_total_earnings += $doc_earnings;
+                        <?php if (empty($physicians_result)): ?>
+                            <tr>
+                                <td colspan="4" class="empty-state">
+                                    <span class="empty-icon" aria-hidden="true">🗒️</span>
+                                    No consultation records found for the selected date range.
+                                </td>
+                            </tr>
+                        <?php else: foreach ($physicians_result as $row):
+                            // $row['earnings'] was computed once above (authoritative
+                            // calculation), so this table and the KPI cards can never
+                            // show two different totals for the same period.
+                            $doc_records  = (int)$row['record_count'];
+                            $doc_rate     = (float)$row['consultation_rate'];
+                            $doc_earnings = $row['earnings'];
                         ?>
                             <tr>
                                 <td>
                                     <strong><?= h($row['physician_name']) ?></strong>
                                     <?= $row['is_active'] ? '' : '<span class="badge-tag badge-inactive">Inactive</span>' ?>
                                 </td>
-                                <td style="text-align: center; font-weight: 600;"><?= $doc_patients ?></td>
+                                <td style="text-align: center; font-weight: 600;"><?= $doc_records ?></td>
                                 <td style="text-align: right; color: var(--text-secondary);">₱<?= number_format($doc_rate, 2) ?></td>
                                 <td style="text-align: right; font-weight: 600;">₱<?= number_format($doc_earnings, 2) ?></td>
                             </tr>
@@ -559,9 +731,9 @@ body {
                     <tfoot>
                         <tr>
                             <td>GRAND TOTAL</td>
-                            <td style="text-align: center;"><?= number_format($grand_consult_patients) ?></td>
+                            <td style="text-align: center;"><?= number_format($grand_consult_records) ?></td>
                             <td></td>
-                            <td style="text-align: right; color: var(--success);">₱<?= number_format($grand_total_earnings, 2) ?></td>
+                            <td style="text-align: right; color: var(--success);">₱<?= number_format($total_doctors_fees, 2) ?></td>
                         </tr>
                     </tfoot>
                 </table>
@@ -575,10 +747,11 @@ body {
                 <h3>Accounting Financial Breakdown</h3>
                 <div class="table-responsive">
                     <table class="modern-table">
+                        <caption class="sr-only">Gross FPE value, doctor's fees, and net fund computation</caption>
                         <thead>
                             <tr>
-                                <th>Financial Component</th>
-                                <th style="text-align: right;">Amount / Computation</th>
+                                <th scope="col">Financial Component</th>
+                                <th scope="col" style="text-align: right;">Amount / Computation</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -592,7 +765,12 @@ body {
                             </tr>
                             <tr>
                                 <td>Net FPE Fund</td>
-                                <td style="text-align: right;"><strong style="color: var(--success);">₱<?= number_format($gross_fpe_value, 2) ?> − ₱<?= number_format($total_doctors_fees, 2) ?> = ₱<?= number_format($net_fpe_fund, 2) ?></strong></td>
+                                <td style="text-align: right;">
+                                    <strong style="color: <?= $net_fpe_fund < 0 ? 'var(--danger)' : 'var(--success)' ?>;">
+                                        ₱<?= number_format($gross_fpe_value, 2) ?> − ₱<?= number_format($total_doctors_fees, 2) ?> = ₱<?= number_format($net_fpe_fund, 2) ?>
+                                        <?= $net_fpe_fund < 0 ? ' (deficit)' : '' ?>
+                                    </strong>
+                                </td>
                             </tr>
                         </tbody>
                     </table>
@@ -604,16 +782,29 @@ body {
                 <h3>Breakdown by Meds Type</h3>
                 <div class="table-responsive">
                     <table class="modern-table">
+                        <caption class="sr-only">Record counts and percentage share by medicine type</caption>
                         <thead>
                             <tr>
-                                <th>Meds Type</th>
-                                <th style="text-align: center;">Count</th>
-                                <th style="text-align: right; width: 35%;">% Share</th>
+                                <th scope="col">Meds Type</th>
+                                <th scope="col" style="text-align: center;">Count</th>
+                                <th scope="col" style="text-align: right; width: 35%;">% Share</th>
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach ($meds_result as $mb): 
-                                $pct = $overall_count > 0 ? round(((int)$mb['cnt'] / $overall_count) * 100, 1) : 0;
+                            <?php if (empty($meds_result)): ?>
+                                <tr>
+                                    <td colspan="3" class="empty-state">
+                                        <span class="empty-icon" aria-hidden="true">💊</span>
+                                        No medicine type records configured.
+                                    </td>
+                                </tr>
+                            <?php else: foreach ($meds_result as $mb):
+                                $pct = $meds_breakdown_total > 0
+                                    ? round(((int)$mb['cnt'] / $meds_breakdown_total) * 100, 1)
+                                    : 0;
+                                // Clamp defensively so a display glitch can never push the
+                                // progress bar or label outside a valid 0-100% range.
+                                $pct = max(0, min(100, $pct));
                             ?>
                             <tr>
                                 <td>
@@ -621,22 +812,74 @@ body {
                                     <span class="badge-tag <?= $mb['is_consultation'] ? 'badge-success' : 'badge-danger' ?>">
                                         <?= $mb['is_consultation'] ? 'Consult' : 'Non-Consult' ?>
                                     </span>
-                                </td> 
+                                </td>
                                 <td style="text-align: center; font-weight: 600;"><?= (int)$mb['cnt'] ?></td>
                                 <td style="text-align: right;">
                                     <div style="font-size: 0.8rem; font-weight: 600; color: var(--text-secondary);"><?= $pct ?>%</div>
                                     <div class="progress-track">
-                                        <div class="progress-bar" style="width: <?= $pct ?>%;"></div>
+                                        <div class="progress-bar" style="width: <?= $pct ?>%;" role="progressbar" aria-valuenow="<?= $pct ?>" aria-valuemin="0" aria-valuemax="100"></div>
                                     </div>
                                 </td>
                             </tr>
-                            <?php endforeach; ?>
-                        </tbody> 
+                            <?php endforeach; endif; ?>
+                        </tbody>
                     </table>
                 </div>
             </section>
         </div>
     </div>
 </div>
+
+<script>
+(function () {
+    "use strict";
+
+    var overlay = document.getElementById('pageLoadingOverlay');
+    var filterForm = document.getElementById('filterForm');
+    var applyBtn = document.getElementById('applyFilterBtn');
+    var exportLink = document.getElementById('exportCsvLink');
+    var presetLinks = document.querySelectorAll('.preset-link');
+
+    function showLoading(disableEl) {
+        if (overlay) overlay.classList.add('is-visible');
+        if (disableEl) disableEl.setAttribute('disabled', 'disabled');
+    }
+
+    // Basic client-side guard: don't let start_date be after end_date
+    // before it even reaches the server (server still re-validates it).
+    if (filterForm) {
+        filterForm.addEventListener('submit', function () {
+            var startInput = document.getElementById('start_date');
+            var endInput = document.getElementById('end_date');
+            if (startInput && endInput && startInput.value && endInput.value && startInput.value > endInput.value) {
+                var tmp = startInput.value;
+                startInput.value = endInput.value;
+                endInput.value = tmp;
+            }
+            showLoading(applyBtn);
+        });
+    }
+
+    if (exportLink) {
+        exportLink.addEventListener('click', function () {
+            showLoading(null); // exports don't navigate away, just download
+            window.setTimeout(function () {
+                if (overlay) overlay.classList.remove('is-visible');
+            }, 1500);
+        });
+    }
+
+    presetLinks.forEach(function (link) {
+        link.addEventListener('click', function () { showLoading(null); });
+    });
+
+    // If the user navigates back (bfcache), make sure a stale overlay
+    // from a previous click never gets stuck on screen.
+    window.addEventListener('pageshow', function () {
+        if (overlay) overlay.classList.remove('is-visible');
+        if (applyBtn) applyBtn.removeAttribute('disabled');
+    });
+})();
+</script>
 
 <?php include 'includes/footer.php'; ?>

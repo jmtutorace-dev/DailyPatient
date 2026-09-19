@@ -43,6 +43,57 @@ function is_second_tranche_patient($patient_name,$status) {
     return $key !== '' && isset($status[$key]);
 }
 
+function is_valid_record_date($date) {
+    if (!is_string($date) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) return false;
+    [$year, $month, $day] = array_map('intval', explode('-', $date));
+    return checkdate($month, $day, $year);
+}
+
+function decode_item_list($value) {
+    if (is_array($value)) {
+        $items = $value;
+    } elseif (is_string($value) && trim($value) !== '') {
+        $decoded = json_decode($value, true);
+        $items = is_array($decoded) ? $decoded : [];
+    } else {
+        $items = [];
+    }
+
+    $clean = [];
+    foreach ($items as $item) {
+        if (is_string($item) && trim($item) !== '') $clean[] = trim($item);
+    }
+    return array_values(array_unique($clean));
+}
+
+function flatten_master_items($grouped) {
+    $allowed = [];
+    foreach ($grouped as $items) {
+        foreach ($items as $item) $allowed[$item] = true;
+    }
+    return $allowed;
+}
+
+function sanitize_item_list($value, $allowed) {
+    $valid = [];
+    foreach (decode_item_list($value) as $item) {
+        if (isset($allowed[$item])) $valid[] = $item;
+    }
+    return array_values(array_unique($valid));
+}
+
+function current_script_path() {
+    $path = $_SERVER['PHP_SELF'] ?? 'index.php';
+    return $path !== '' ? $path : 'index.php';
+}
+
+function json_response($payload, $status = 200) {
+    http_response_code((int)$status);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
 /**
  * Reusable check: does a patient already have ANY recorded visit?
  *
@@ -125,21 +176,8 @@ function get_consultation_meds_type_id($conn) {
     return $row ? (int)$row['meds_type_id'] : null;
 }
 
-// Ensure necessary JSON columns exist
-$check_meds = $conn->query("SHOW COLUMNS FROM daily_records LIKE 'record_medications'");
-if ($check_meds && $check_meds->num_rows === 0) {
-    $conn->query("ALTER TABLE daily_records ADD COLUMN record_medications TEXT NULL AFTER has_gamot_meds");
-}
-
-$check_gamot = $conn->query("SHOW COLUMNS FROM daily_records LIKE 'record_gamot'");
-if ($check_gamot && $check_gamot->num_rows === 0) {
-    $conn->query("ALTER TABLE daily_records ADD COLUMN record_gamot TEXT NULL AFTER record_medications");
-}
-
-$check_labs = $conn->query("SHOW COLUMNS FROM daily_records LIKE 'record_labs'");
-if ($check_labs && $check_labs->num_rows === 0) {
-    $conn->query("ALTER TABLE daily_records ADD COLUMN record_labs TEXT NULL AFTER record_gamot");
-}
+// Database schema is not modified during normal page requests.
+// Required record_* columns should be provisioned by the database migration/setup.
 
 // Master list of Standard Meds (Grouped)
 $standard_meds_grouped = [
@@ -206,33 +244,51 @@ $available_labs = [
         'Urinalysis', 'Pap smear', 'Fecalysis (stool exam)', 'Fecal occult blood test'
     ]
 ];
+$allowed_standard_meds = flatten_master_items($standard_meds_grouped);
+$allowed_gamot_meds = flatten_master_items($available_medicines);
+$allowed_labs = flatten_master_items($available_labs);
+$script_path = current_script_path();
+
 
 // --- AJAX Endpoints ---
 if (isset($_GET['ajax']) && $_GET['ajax'] === 'check_similar_name') {
-    header('Content-Type: application/json; charset=utf-8');
-    $raw = trim($_GET['name'] ?? '');
+    $raw = trim((string)($_GET['name'] ?? ''));
     $name = normalize_patient_name($raw);
     $matches = [];
+
     if ($name !== '') {
-        $stmt = $conn->prepare("SELECT DISTINCT patient_name FROM patients WHERE patient_name IS NOT NULL AND patient_name != ''");
+        $like = '%' . $name . '%';
+        $stmt = $conn->prepare("
+            SELECT DISTINCT patient_name
+            FROM patients
+            WHERE patient_name IS NOT NULL
+              AND TRIM(patient_name) <> ''
+              AND LOWER(TRIM(patient_name)) LIKE LOWER(TRIM(?))
+            ORDER BY patient_name
+            LIMIT 50
+        ");
+        $stmt->bind_param('s', $like);
         $stmt->execute();
         $res = $stmt->get_result();
-        $existing = [];
-        while ($row = $res->fetch_assoc()) { $existing[] = $row['patient_name']; }
-        $stmt->close();
-        foreach ($existing as $existing_name) {
+
+        while ($row = $res->fetch_assoc()) {
+            $existing_name = (string)$row['patient_name'];
             $norm_existing = normalize_patient_name($existing_name);
             if (strcasecmp($norm_existing, $name) === 0) continue;
-            $similar_text_percent = 0.0;
-            similar_text($name, $norm_existing, $similar_text_percent);
+
+            $percent = 0.0;
+            similar_text($name, $norm_existing, $percent);
             $lev = levenshtein($name, $norm_existing);
-            if ($similar_text_percent >= 80.0 || (mb_strlen($norm_existing) > 0 && mb_strlen($norm_existing) <= 8 && $lev <= 2)) {
+
+            if ($percent >= 80.0 ||
+                (mb_strlen($norm_existing) > 0 && mb_strlen($norm_existing) <= 8 && $lev <= 2)) {
                 $matches[] = ['patient_name' => $existing_name];
             }
         }
+        $stmt->close();
     }
-    echo json_encode(['name' => $name, 'matches' => $matches]);
-    exit;
+
+    json_response(['name' => $name, 'matches' => $matches]);
 }
 
 if (isset($_GET['ajax']) && $_GET['ajax'] === 'check_existing_fpe') {
@@ -260,8 +316,11 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'check_registered') {
 // --- HANDLE REAL-TIME AJAX FILTER ENDPOINT ---
 if (isset($_GET['ajax']) && $_GET['ajax'] === 'filter_records') {
     header('Content-Type: application/json; charset=utf-8');
-    $selected_date = $_GET['date'] ?? date('Y-m-d');
-    $search_query = trim($_GET['search'] ?? '');
+    $selected_date = trim((string)($_GET['date'] ?? date('Y-m-d')));
+    if (!is_valid_record_date($selected_date)) {
+        json_response(['success' => false, 'message' => 'Invalid date.'], 400);
+    }
+    $search_query = trim((string)($_GET['search'] ?? ''));
     $filter_physician = isset($_GET['filter_physician']) ? (int)$_GET['filter_physician'] : 0;
     $filter_meds_type = isset($_GET['filter_meds_type']) ? (int)$_GET['filter_meds_type'] : 0;
 
@@ -433,8 +492,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
     if ($action === 'add') {
-        $record_date = $_POST['record_date'] ?? '';
+        $record_date = trim((string)($_POST['record_date'] ?? ''));
         $patient_name = normalize_patient_name($_POST['patient_name'] ?? '');
+
+        if (!is_valid_record_date($record_date)) {
+            redirect_with_msg('index.php?date=' . urlencode(date('Y-m-d')), 'Invalid record date. Please choose a valid date.', 'error');
+        }
+        if ($patient_name === '') {
+            redirect_with_msg('index.php?date=' . urlencode($record_date), 'Patient name is required.', 'error');
+        }
         $physician_id = !empty($_POST['physician_id']) ? (int)$_POST['physician_id'] : null;
         $meds_type_id = !empty($_POST['meds_type_id']) ? (int)$_POST['meds_type_id'] : null;
         $has_meds = isset($_POST['has_meds']) ? 1 : 0;
@@ -454,9 +520,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        $selected_meds = ($has_meds && isset($_POST['medications']) && is_array($_POST['medications'])) ? json_encode(array_values($_POST['medications'])) : null;
-        $selected_gamot = ($has_gamot_meds && isset($_POST['gamot_meds']) && is_array($_POST['gamot_meds'])) ? json_encode(array_values($_POST['gamot_meds'])) : null;
-        $selected_labs = ($has_labs && isset($_POST['labs']) && is_array($_POST['labs'])) ? json_encode(array_values($_POST['labs'])) : null;
+        $selected_meds_items = $has_meds ? sanitize_item_list($_POST['medications'] ?? [], $allowed_standard_meds) : [];
+        $selected_gamot_items = $has_gamot_meds ? sanitize_item_list($_POST['gamot_meds'] ?? [], $allowed_gamot_meds) : [];
+        $selected_labs_items = $has_labs ? sanitize_item_list($_POST['labs'] ?? [], $allowed_labs) : [];
+
+        $selected_meds = !empty($selected_meds_items) ? json_encode($selected_meds_items, JSON_UNESCAPED_UNICODE) : null;
+        $selected_gamot = !empty($selected_gamot_items) ? json_encode($selected_gamot_items, JSON_UNESCAPED_UNICODE) : null;
+        $selected_labs = !empty($selected_labs_items) ? json_encode($selected_labs_items, JSON_UNESCAPED_UNICODE) : null;
 
         $is_consultation_visit = $meds_type_id !== null && !is_fpe_meds_type($conn, $meds_type_id);
         if ($is_consultation_visit && empty($physician_id)) {
@@ -468,7 +538,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if (!empty($record_date) && !empty($patient_name)) {
-            $dup_stmt = $conn->prepare("SELECT record_id FROM daily_records WHERE TRIM(patient_name) = ? AND record_date = ? LIMIT 1");
+            $dup_stmt = $conn->prepare("SELECT record_id FROM daily_records WHERE LOWER(TRIM(patient_name)) = LOWER(TRIM(?)) AND record_date = ? LIMIT 1");
             $dup_stmt->bind_param('ss', $patient_name, $record_date);
             $dup_stmt->execute();
             $is_dup = $dup_stmt->get_result()->fetch_assoc();
@@ -511,12 +581,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($action === 'update') {
         $record_id = (int)($_POST['record_id'] ?? 0);
         $patient_name = normalize_patient_name($_POST['patient_name'] ?? '');
+        $record_date = trim((string)($_POST['record_date'] ?? ''));
+
+        if ($record_id <= 0) {
+            redirect_with_msg('index.php?date=' . urlencode(date('Y-m-d')), 'Invalid record selected.', 'error');
+        }
+        if (!is_valid_record_date($record_date)) {
+            redirect_with_msg('index.php?date=' . urlencode(date('Y-m-d')), 'Invalid record date. Please choose a valid date.', 'error');
+        }
+        if ($patient_name === '') {
+            redirect_with_msg('index.php?date=' . urlencode($record_date), 'Patient name is required.', 'error');
+        }
         $physician_id = !empty($_POST['physician_id']) ? (int)$_POST['physician_id'] : null;
         $meds_type_id = !empty($_POST['meds_type_id']) ? (int)$_POST['meds_type_id'] : null;
         $has_meds = isset($_POST['has_meds']) ? 1 : 0;
         $has_labs = isset($_POST['has_labs']) ? 1 : 0;
         $has_gamot_meds = isset($_POST['has_gamot_meds']) ? 1 : 0;
-        $record_date = $_POST['record_date'] ?? '';
 
         // Same rule as on add: a checked service defaults the visit type to
         // Consultation only when it isn't already a consultation-type — a
@@ -529,9 +609,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        $selected_meds = ($has_meds && isset($_POST['medications']) && is_array($_POST['medications'])) ? json_encode(array_values($_POST['medications'])) : null;
-        $selected_gamot = ($has_gamot_meds && isset($_POST['gamot_meds']) && is_array($_POST['gamot_meds'])) ? json_encode(array_values($_POST['gamot_meds'])) : null;
-        $selected_labs = ($has_labs && isset($_POST['labs']) && is_array($_POST['labs'])) ? json_encode(array_values($_POST['labs'])) : null;
+        $selected_meds_items = $has_meds ? sanitize_item_list($_POST['medications'] ?? [], $allowed_standard_meds) : [];
+        $selected_gamot_items = $has_gamot_meds ? sanitize_item_list($_POST['gamot_meds'] ?? [], $allowed_gamot_meds) : [];
+        $selected_labs_items = $has_labs ? sanitize_item_list($_POST['labs'] ?? [], $allowed_labs) : [];
+
+        $selected_meds = !empty($selected_meds_items) ? json_encode($selected_meds_items, JSON_UNESCAPED_UNICODE) : null;
+        $selected_gamot = !empty($selected_gamot_items) ? json_encode($selected_gamot_items, JSON_UNESCAPED_UNICODE) : null;
+        $selected_labs = !empty($selected_labs_items) ? json_encode($selected_labs_items, JSON_UNESCAPED_UNICODE) : null;
 
         $is_consultation_visit = $meds_type_id !== null && !is_fpe_meds_type($conn, $meds_type_id);
         if ($is_consultation_visit && empty($physician_id)) {
@@ -543,6 +627,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ($record_id > 0 && !empty($patient_name)) {
+            $dup_stmt = $conn->prepare("
+                SELECT record_id
+                FROM daily_records
+                WHERE LOWER(TRIM(patient_name)) = LOWER(TRIM(?))
+                  AND record_date = ?
+                  AND record_id <> ?
+                LIMIT 1
+            ");
+            $dup_stmt->bind_param('ssi', $patient_name, $record_date, $record_id);
+            $dup_stmt->execute();
+            $duplicate_record = $dup_stmt->get_result()->fetch_assoc();
+            $dup_stmt->close();
+
+            if ($duplicate_record) {
+                redirect_with_msg(
+                    'index.php?date=' . urlencode($record_date),
+                    'This patient already has a record for this date. The update was not saved.',
+                    'error'
+                );
+            }
+
             if (is_fpe_meds_type($conn, $meds_type_id)) {
                 $existing = patient_is_registered($conn, $patient_name, $record_id);
                 if ($existing !== false) {
@@ -690,6 +795,79 @@ include 'includes/header.php';
 #printable-patient-list {
     display: none;
 }
+
+/* Compact MEDS / GAMOT / LABS selector */
+.service-tabs-container {
+    display:block;
+    margin-top:.55rem;
+}
+.service-tabs-header {
+    display:none;
+}
+.service-tab-panes {
+    display:block;
+    padding:0;
+}
+.service-tab-pane {
+    display:none !important;
+    margin:.45rem 0 0 !important;
+    padding:.5rem !important;
+    border:1px solid var(--border-color) !important;
+    border-radius:var(--radius-sm);
+    background:#fff !important;
+    min-width:0;
+    max-height:190px;
+    overflow-y:auto;
+    box-shadow:none;
+}
+.service-tab-pane.active {
+    display:block !important;
+}
+.service-tab-pane[data-service-pane="meds"] { border-top:2px solid var(--primary) !important; }
+.service-tab-pane[data-service-pane="gamot"] { border-top:2px solid #7c3aed !important; }
+.service-tab-pane[data-service-pane="labs"] { border-top:2px solid #047857 !important; }
+.service-selector-title {
+    display:none;
+}
+.service-selector-title .service-title-count {
+    float:right;
+    font-size:.68rem;
+    font-weight:600;
+    color:var(--text-muted);
+}
+.service-selector-search { position:relative; margin:0 0 .35rem; }
+.service-selector-search .selector-search-input {
+    width:100%; box-sizing:border-box; padding:.48rem .55rem .48rem 1.8rem;
+    border:1px solid var(--border-color); border-radius:var(--radius-sm);
+    background:#fff; color:var(--text-main,#1e293b); font-size:.78rem; outline:none;
+}
+.service-selector-search .selector-search-input:focus { border-color:var(--primary); box-shadow:0 0 0 3px rgba(15,118,110,.07); }
+.service-selector-search .selector-search-icon { position:absolute; left:.58rem; top:50%; transform:translateY(-50%); pointer-events:none; font-size:.78rem; opacity:.65; }
+.selector-search-count { display:block; margin-top:.25rem; color:var(--text-muted); font-size:.66rem; }
+.selector-category { margin:.3rem 0; border:0; border-radius:0; background:transparent; overflow:visible; }
+.selector-category-title {
+    padding:.2rem .15rem; font-size:.65rem; line-height:1.15; font-weight:700;
+    color:var(--text-main,#1e293b); background:transparent; border-bottom:1px solid var(--border-color);
+}
+.selector-category .items-grid { padding:.25rem 0; border:0; gap:.25rem; }
+.selector-item-hidden { display:none !important; }
+.selector-category.is-empty { display:none !important; }
+.service-selector .select-card-box { min-height:29px; box-sizing:border-box; font-size:.7rem; padding:.32rem .4rem; }
+.service-selector .selector-no-results { display:none; padding:.6rem; border:1px dashed var(--border-color); border-radius:var(--radius-sm); text-align:center; color:var(--text-muted); font-size:.72rem; background:#fff; }
+.service-selector.has-no-results .selector-no-results { display:block; }
+@media (max-width:1050px) {
+    .service-tab-panes { grid-template-columns:1fr; }
+}
+
+/* Improved service search visibility */
+.service-selector-search { position:relative; margin:0 0 .8rem; }
+.service-selector-search .selector-search-input { width:100%; box-sizing:border-box; min-height:40px; padding:.65rem .8rem .65rem 2.35rem; border:1px solid #cbd5e1; border-radius:6px; background:#fff; color:var(--text-main,#1e293b); font-size:.9rem; outline:none; box-shadow:0 1px 2px rgba(15,23,42,.04); transition:border-color .15s ease,box-shadow .15s ease; }
+.service-selector-search .selector-search-input::placeholder { color:#64748b; opacity:1; }
+.service-selector-search .selector-search-input:hover { border-color:#94a3b8; }
+.service-selector-search .selector-search-input:focus { border-color:var(--primary,#0f766e); box-shadow:0 0 0 3px rgba(15,118,110,.10); }
+.service-selector-search .selector-search-icon { position:absolute; left:.86rem; top:22px; transform:translateY(-50%); pointer-events:none; font-size:1rem; opacity:.8; }
+.selector-search-count { display:block; margin-top:.35rem; color:var(--text-muted); font-size:.72rem; }
+
 </style>
 <style>
 /* Compact Single-Row Add Patient Panel */
@@ -1304,6 +1482,36 @@ body {
 }
 </style>
 
+
+
+
+<style>
+/* Table hierarchy: service/status controls first, record actions always last. */
+#records-table th:last-child,
+#records-table td:last-child {
+    min-width: 145px;
+    text-align: center !important;
+    white-space: nowrap;
+}
+#records-table th:nth-child(1) { min-width: 190px; }
+#records-table th:nth-child(2) { min-width: 135px; }
+#records-table th:nth-child(3) { min-width: 120px; }
+#records-table th:nth-child(4) { min-width: 170px; }
+#records-table th:nth-child(5),
+#records-table th:nth-child(6),
+#records-table th:nth-child(7) { min-width: 105px; }
+.record-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+.record-actions form { margin: 0; padding: 0; }
+.record-actions .btn { min-height: 32px; }
+@media (max-width: 760px) {
+    .record-actions { flex-direction: column; align-items: stretch; }
+}
+</style>
 <div class="page-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
     <h2>📋 Daily Log</h2>
     <div style="display: flex; gap: 0.5rem;">
@@ -1368,7 +1576,7 @@ body {
                 <input type="date" id="jump_date" name="date" value="<?= h($selected_date) ?>">
                 <button type="submit" class="btn btn-primary btn-sm">Go</button>
             </form>
-            <button type="button" class="btn btn-sm btn-outline" style="width: 100%; margin-bottom: 1.25rem;" onclick="document.getElementById('jump_date').value='<?= date('Y-m-d') ?>';this.form.submit();">
+            <button type="button" class="btn btn-sm btn-outline" style="width: 100%; margin-bottom: 1.25rem;" onclick="document.getElementById('jump_date').value='<?= date('Y-m-d') ?>';document.querySelector('.date-picker-group').submit();">
                 📅 Jump to Today
             </button>
 
@@ -1406,12 +1614,9 @@ body {
                     <span style="font-weight: 600; font-size: 0.95rem; color: var(--primary-dark);">Add Patient Record</span>
                     <span class="add-patient-caption"><?= h(date('F j, Y', strtotime($selected_date))) ?></span>
                 </div>
-                <button type="button" id="toggle-add-patient" class="btn btn-primary btn-sm" aria-expanded="false" style="padding: 0.25rem 0.75rem; font-size: 0.8rem;">
-                    + Add Patient
-                </button>
             </div>
 
-            <div id="add-patient-form-wrap" hidden>
+            <div id="add-patient-form-wrap">
                 <form method="post" action="index.php" autocomplete="off" onsubmit="return validatePatientRecordForm(this);">
                 <input type="hidden" name="action" value="add">
                 <input type="hidden" name="record_date" value="<?= h($selected_date) ?>">
@@ -1438,64 +1643,87 @@ body {
                     </select>
 
                     <label class="select-card-box" style="background:#fff; font-size: 0.8rem;">
-                        <input type="checkbox" name="has_meds" value="1" onchange="toggleBox(this, 'add-meds-box'); syncConsultationRequirements(this.form)"> Meds
+                        <input type="checkbox" name="has_meds" value="1" onchange="toggleServiceTabCheckbox(this, 'add', 'meds'); syncConsultationRequirements(this.form)"> Meds
                     </label>
                     <label class="select-card-box" style="background:#fff; font-size: 0.8rem;">
-                        <input type="checkbox" name="has_labs" value="1" onchange="toggleBox(this, 'add-labs-box'); syncConsultationRequirements(this.form)"> Labs
+                        <input type="checkbox" name="has_labs" value="1" onchange="toggleServiceTabCheckbox(this, 'add', 'labs'); syncConsultationRequirements(this.form)"> Labs
                     </label>
                     <label class="select-card-box" style="background:#fff; font-size: 0.8rem;">
-                        <input type="checkbox" name="has_gamot_meds" value="1" onchange="toggleBox(this, 'add-gamot-box'); syncConsultationRequirements(this.form)"> Gamot
+                        <input type="checkbox" name="has_gamot_meds" value="1" onchange="toggleServiceTabCheckbox(this, 'add', 'gamot'); syncConsultationRequirements(this.form)"> Gamot
                     </label>
 
                     <button type="submit" id="add_record_btn" class="btn btn-primary btn-sm" style="padding: 0.4rem 0.8rem;">Save</button>
                 </div>
 
-                <!-- Add Form Standard Meds Selector -->
-                <div id="add-meds-box" class="toggle-selection-container">
-                    <div style="font-size: 0.8rem; font-weight: 600; color: var(--primary); margin-bottom: 0.5rem;">Select Yakap Medicine:</div>
-                    <?php foreach ($standard_meds_grouped as $category => $meds): ?>
-                        <div class="group-title"><?= h($category) ?></div>
-                        <div class="items-grid">
-                            <?php foreach ($meds as $smed): ?>
-                                <div class="select-card-box" onclick="toggleCard(this)">
-                                    <input type="checkbox" name="medications[]" value="<?= h($smed) ?>">
-                                    <span><?= h($smed) ?></span>
-                                </div>
-                            <?php endforeach; ?>
+                <div id="add-service-selector" class="service-tabs-container" data-service-container="add">
+                    <div class="service-tab-panes">
+                <div id="add-meds-box" data-service-pane="meds" class="service-selector service-tab-pane" data-selector-group="add-meds">
+                    <div class="service-selector-title">MEDS <span class="service-title-count" data-title-count="meds">0 selected</span></div>
+                    <div class="service-selector-search">
+                        <span class="selector-search-icon">🔍</span>
+                        <input type="search" class="selector-search-input" placeholder="Search medicines..." autocomplete="off" oninput="filterServiceOptions(this)">
+                        <span class="selector-search-count"></span>
+                    </div>
+                    
+                    <?php foreach ($standard_meds_grouped as $category => $items): ?>
+                        <div class="selector-category"><div class="selector-category-title"><?= h($category) ?></div>
+                            <div class="items-grid">
+                                <?php foreach ($items as $item): ?>
+                                    <div class="select-card-box selector-item" data-search-text="<?= h(mb_strtolower($item)) ?>" onclick="toggleCard(this, event)">
+                                        <input type="checkbox" name="medications[]" value="<?= h($item) ?>">
+                                        <span><?= h($item) ?></span>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                            
                         </div>
                     <?php endforeach; ?>
                 </div>
-
-                <!-- Add Form Gamot Selector -->
-                <div id="add-gamot-box" class="toggle-selection-container" style="border-color: #e9d5ff;">
-                    <div style="font-size: 0.8rem; font-weight: 600; color: #7c3aed; margin-bottom: 0.5rem;">Select Gamot Medicine:</div>
-                    <?php foreach ($available_medicines as $category => $meds): ?>
-                        <div class="group-title gamot-title"><?= h($category) ?></div>
-                        <div class="items-grid">
-                            <?php foreach ($meds as $med): ?>
-                                <div class="select-card-box" onclick="toggleCard(this)">
-                                    <input type="checkbox" name="gamot_meds[]" value="<?= h($med) ?>">
-                                    <span><?= h($med) ?></span>
-                                </div>
-                            <?php endforeach; ?>
+                <div id="add-gamot-box" data-service-pane="gamot" class="service-selector service-tab-pane" data-selector-group="add-gamot" style="border-color: #e9d5ff;">
+                    <div class="service-selector-title">GAMOT <span class="service-title-count" data-title-count="gamot">0 selected</span></div>
+                    <div class="service-selector-search">
+                        <span class="selector-search-icon">🔍</span>
+                        <input type="search" class="selector-search-input" placeholder="Search gamot..." autocomplete="off" oninput="filterServiceOptions(this)">
+                        <span class="selector-search-count"></span>
+                    </div>
+                    
+                    <?php foreach ($available_medicines as $category => $items): ?>
+                        <div class="selector-category"><div class="selector-category-title"><?= h($category) ?></div>
+                            <div class="items-grid">
+                                <?php foreach ($items as $item): ?>
+                                    <div class="select-card-box selector-item" data-search-text="<?= h(mb_strtolower($item)) ?>" onclick="toggleCard(this, event)">
+                                        <input type="checkbox" name="gamot_meds[]" value="<?= h($item) ?>">
+                                        <span><?= h($item) ?></span>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                            
                         </div>
                     <?php endforeach; ?>
                 </div>
-
-                <!-- Add Form Labs Selector -->
-                <div id="add-labs-box" class="toggle-selection-container" style="border-color: #a7f3d0;">
-                    <div style="font-size: 0.8rem; font-weight: 600; color: #047857; margin-bottom: 0.5rem;">Select Laboratory Tests:</div>
-                    <?php foreach ($available_labs as $category => $labs): ?>
-                        <div class="group-title lab-title"><?= h($category) ?></div>
-                        <div class="items-grid">
-                            <?php foreach ($labs as $lab): ?>
-                                <div class="select-card-box" onclick="toggleCard(this)">
-                                    <input type="checkbox" name="labs[]" value="<?= h($lab) ?>">
-                                    <span><?= h($lab) ?></span>
-                                </div>
-                            <?php endforeach; ?>
+                <div id="add-labs-box" data-service-pane="labs" class="service-selector service-tab-pane" data-selector-group="add-labs" style="border-color: #a7f3d0;">
+                    <div class="service-selector-title">LABS <span class="service-title-count" data-title-count="labs">0 selected</span></div>
+                    <div class="service-selector-search">
+                        <span class="selector-search-icon">🔍</span>
+                        <input type="search" class="selector-search-input" placeholder="Search laboratory tests..." autocomplete="off" oninput="filterServiceOptions(this)">
+                        <span class="selector-search-count"></span>
+                    </div>
+                    
+                    <?php foreach ($available_labs as $category => $items): ?>
+                        <div class="selector-category"><div class="selector-category-title"><?= h($category) ?></div>
+                            <div class="items-grid">
+                                <?php foreach ($items as $item): ?>
+                                    <div class="select-card-box selector-item" data-search-text="<?= h(mb_strtolower($item)) ?>" onclick="toggleCard(this, event)">
+                                        <input type="checkbox" name="labs[]" value="<?= h($item) ?>">
+                                        <span><?= h($item) ?></span>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                            
                         </div>
                     <?php endforeach; ?>
+                </div>
+                    </div>
                 </div>
                 </form>
             </div>
@@ -1546,10 +1774,10 @@ body {
                             <th>Physician</th>
                             <th>Meds Type</th>
                             <th>Availed Services</th>
-                            <th style="text-align: right;">Actions</th>
                             <th>Consultation</th>
-                             <th style="text-align: center;">PCU</th>
+                            <th style="text-align: center;">PCU</th>
                             <th style="text-align: center;">History</th>
+                            <th style="text-align: center;">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="records_table_body">
@@ -1581,17 +1809,6 @@ body {
                                         <span class="tag <?= $row['has_labs'] ? 'tag-success' : 'tag-gray' ?>">Labs</span>
                                     </div>
                                 </td>
-                                <td style="text-align: right; vertical-align: middle;" onclick="event.stopPropagation()">
-                                    <div style="display: flex; gap: 0.35rem; justify-content: flex-end;">
-                                        <button type="button" class="btn btn-sm btn-outline" onclick="openEditModal(<?= htmlspecialchars(json_encode($row), ENT_QUOTES, 'UTF-8') ?>)">✏️ Edit</button>
-                                        <form method="post" action="index.php" onsubmit="return confirm('Delete record for <?= h(addslashes($row['patient_name'])) ?>?');" style="display:inline;">
-                                            <input type="hidden" name="action" value="delete">
-                                            <input type="hidden" name="record_id" value="<?= (int)$row['record_id'] ?>">
-                                            <input type="hidden" name="record_date" value="<?= h($selected_date) ?>">
-                                            <button type="submit" class="btn btn-danger btn-sm">🗑️</button>
-                                        </form>
-                                    </div>
-                                </td>
                                 <td style="vertical-align: middle;" onclick="event.stopPropagation()">
                                     <a href="patient-consultation.php?q=<?= urlencode($row['patient_name']) ?>" class="btn btn-outline btn-sm patient-action-btn">Consultation</a>
                                 </td>
@@ -1612,6 +1829,17 @@ body {
                                 </td>
                                 <td style="text-align: center; vertical-align: middle;" onclick="event.stopPropagation()">
                                     <button type="button" class="btn btn-outline btn-sm patient-action-btn" data-patient="<?= h($row['patient_name']) ?>" onclick="openPatientHistory(this.dataset.patient)">History</button>
+                                </td>
+                                <td style="text-align: center; vertical-align: middle;" onclick="event.stopPropagation()">
+                                    <div class="record-actions">
+                                        <button type="button" class="btn btn-sm btn-outline" onclick="openEditModal(<?= htmlspecialchars(json_encode($row), ENT_QUOTES, 'UTF-8') ?>)">✏️ Edit</button>
+                                        <form method="post" action="index.php" onsubmit="return confirm('Delete record for <?= h(addslashes($row['patient_name'])) ?>?');">
+                                            <input type="hidden" name="action" value="delete">
+                                            <input type="hidden" name="record_id" value="<?= (int)$row['record_id'] ?>">
+                                            <input type="hidden" name="record_date" value="<?= h($selected_date) ?>">
+                                            <button type="submit" class="btn btn-danger btn-sm">🗑️ Delete</button>
+                                        </form>
+                                    </div>
                                 </td>
                             </tr>
                         <?php endforeach; endif; ?>
@@ -1954,48 +2182,80 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                 </div>
                 <div style="display: flex; gap: 1rem; border-top: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); padding: 0.75rem 0;">
-                    <label class="select-card-box"><input type="checkbox" name="has_meds" id="edit_has_meds" value="1" onchange="toggleBox(this, 'edit-meds-box'); syncConsultationRequirements(this.form)"> Meds</label>
-                    <label class="select-card-box"><input type="checkbox" name="has_gamot_meds" id="edit_has_gamot_meds" value="1" onchange="toggleBox(this, 'edit-gamot-box'); syncConsultationRequirements(this.form)"> Gamot</label>
-                    <label class="select-card-box"><input type="checkbox" name="has_labs" id="edit_has_labs" value="1" onchange="toggleBox(this, 'edit-labs-box'); syncConsultationRequirements(this.form)"> Labs</label>
+                    <label class="select-card-box"><input type="checkbox" name="has_meds" id="edit_has_meds" value="1" onchange="toggleServiceTabCheckbox(this, 'edit', 'meds'); syncConsultationRequirements(this.form)"> Meds</label>
+                    <label class="select-card-box"><input type="checkbox" name="has_gamot_meds" id="edit_has_gamot_meds" value="1" onchange="toggleServiceTabCheckbox(this, 'edit', 'gamot'); syncConsultationRequirements(this.form)"> Gamot</label>
+                    <label class="select-card-box"><input type="checkbox" name="has_labs" id="edit_has_labs" value="1" onchange="toggleServiceTabCheckbox(this, 'edit', 'labs'); syncConsultationRequirements(this.form)"> Labs</label>
                 </div>
                 
-                <!-- Edit Modal Standard Meds Selector -->
-                <div id="edit-meds-box" class="toggle-selection-container">
-                    <div style="font-size: 0.8rem; font-weight: 600; color: var(--primary); margin-bottom: 0.5rem;">Select Yakap Medicine:</div>
-                    <?php foreach ($standard_meds_grouped as $category => $meds): ?>
-                        <div class="group-title"><?= h($category) ?></div>
-                        <div class="items-grid">
-                            <?php foreach ($meds as $smed): ?>
-                                <div class="select-card-box" onclick="toggleCard(this)"><input type="checkbox" class="edit-med-cb" name="medications[]" value="<?= h($smed) ?>"><span><?= h($smed) ?></span></div>
-                            <?php endforeach; ?>
+                <div id="edit-service-selector" class="service-tabs-container" data-service-container="edit">
+                    <div class="service-tab-panes">
+                <div id="edit-meds-box" data-service-pane="meds" class="service-selector service-tab-pane" data-selector-group="edit-meds">
+                    <div class="service-selector-title">MEDS <span class="service-title-count" data-title-count="meds">0 selected</span></div>
+                    <div class="service-selector-search">
+                        <span class="selector-search-icon">🔍</span>
+                        <input type="search" class="selector-search-input" placeholder="Search medicines..." autocomplete="off" oninput="filterServiceOptions(this)">
+                        <span class="selector-search-count"></span>
+                    </div>
+                    
+                    <?php foreach ($standard_meds_grouped as $category => $items): ?>
+                        <div class="selector-category"><div class="selector-category-title"><?= h($category) ?></div>
+                            <div class="items-grid">
+                                <?php foreach ($items as $item): ?>
+                                    <div class="select-card-box selector-item" data-search-text="<?= h(mb_strtolower($item)) ?>" onclick="toggleCard(this, event)">
+                                        <input type="checkbox" edit-med-cb name="medications[]" value="<?= h($item) ?>">
+                                        <span><?= h($item) ?></span>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                            
                         </div>
                     <?php endforeach; ?>
                 </div>
-
-                <!-- Edit Modal Gamot Selector -->
-                <div id="edit-gamot-box" class="toggle-selection-container" style="border-color: #e9d5ff;">
-                    <div style="font-size: 0.8rem; font-weight: 600; color: #7c3aed; margin-bottom: 0.5rem;">Select Gamot Medicine:</div>
-                    <?php foreach ($available_medicines as $category => $meds): ?>
-                        <div class="group-title gamot-title"><?= h($category) ?></div>
-                        <div class="items-grid">
-                            <?php foreach ($meds as $med): ?>
-                                <div class="select-card-box" onclick="toggleCard(this)"><input type="checkbox" class="edit-gamot-cb" name="gamot_meds[]" value="<?= h($med) ?>"><span><?= h($med) ?></span></div>
-                            <?php endforeach; ?>
+                <div id="edit-gamot-box" data-service-pane="gamot" class="service-selector service-tab-pane" data-selector-group="edit-gamot" style="border-color: #e9d5ff;">
+                    <div class="service-selector-title">GAMOT <span class="service-title-count" data-title-count="gamot">0 selected</span></div>
+                    <div class="service-selector-search">
+                        <span class="selector-search-icon">🔍</span>
+                        <input type="search" class="selector-search-input" placeholder="Search gamot..." autocomplete="off" oninput="filterServiceOptions(this)">
+                        <span class="selector-search-count"></span>
+                    </div>
+                    
+                    <?php foreach ($available_medicines as $category => $items): ?>
+                        <div class="selector-category"><div class="selector-category-title"><?= h($category) ?></div>
+                            <div class="items-grid">
+                                <?php foreach ($items as $item): ?>
+                                    <div class="select-card-box selector-item" data-search-text="<?= h(mb_strtolower($item)) ?>" onclick="toggleCard(this, event)">
+                                        <input type="checkbox" edit-gamot-cb name="gamot_meds[]" value="<?= h($item) ?>">
+                                        <span><?= h($item) ?></span>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                            
                         </div>
                     <?php endforeach; ?>
                 </div>
-
-                <!-- Edit Modal Labs Selector -->
-                <div id="edit-labs-box" class="toggle-selection-container" style="border-color: #a7f3d0;">
-                    <div style="font-size: 0.8rem; font-weight: 600; color: #047857; margin-bottom: 0.5rem;">Select Laboratory Tests:</div>
-                    <?php foreach ($available_labs as $category => $labs): ?>
-                        <div class="group-title lab-title"><?= h($category) ?></div>
-                        <div class="items-grid">
-                            <?php foreach ($labs as $lab): ?>
-                                <div class="select-card-box" onclick="toggleCard(this)"><input type="checkbox" class="edit-lab-cb" name="labs[]" value="<?= h($lab) ?>"><span><?= h($lab) ?></span></div>
-                            <?php endforeach; ?>
+                <div id="edit-labs-box" data-service-pane="labs" class="service-selector service-tab-pane" data-selector-group="edit-labs" style="border-color: #a7f3d0;">
+                    <div class="service-selector-title">LABS <span class="service-title-count" data-title-count="labs">0 selected</span></div>
+                    <div class="service-selector-search">
+                        <span class="selector-search-icon">🔍</span>
+                        <input type="search" class="selector-search-input" placeholder="Search laboratory tests..." autocomplete="off" oninput="filterServiceOptions(this)">
+                        <span class="selector-search-count"></span>
+                    </div>
+                    
+                    <?php foreach ($available_labs as $category => $items): ?>
+                        <div class="selector-category"><div class="selector-category-title"><?= h($category) ?></div>
+                            <div class="items-grid">
+                                <?php foreach ($items as $item): ?>
+                                    <div class="select-card-box selector-item" data-search-text="<?= h(mb_strtolower($item)) ?>" onclick="toggleCard(this, event)">
+                                        <input type="checkbox" edit-lab-cb name="labs[]" value="<?= h($item) ?>">
+                                        <span><?= h($item) ?></span>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                            
                         </div>
                     <?php endforeach; ?>
+                </div>
+                    </div>
                 </div>
 
                 <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem;">
@@ -2029,12 +2289,39 @@ document.addEventListener('DOMContentLoaded', () => {
 </div>
 
 <script>
-function toggleCard(cardElement) {
+function toggleCard(cardElement, event) {
     const cb = cardElement.querySelector('input[type="checkbox"]');
-    if (cb) {
+    if (!cb) return;
+
+    if (event && event.target && event.target.matches('input[type="checkbox"]')) {
+        cb.checked ? cardElement.classList.add('active') : cardElement.classList.remove('active');
+    } else {
         cb.checked = !cb.checked;
+        cb.dispatchEvent(new Event('change', { bubbles: true }));
         cb.checked ? cardElement.classList.add('active') : cardElement.classList.remove('active');
     }
+
+    // Selecting an item automatically enables its service checkbox. This
+    // prevents a medicine/lab/gamot item from being selected but not recorded
+    // simply because the master service checkbox was missed.
+    if (cb.checked) {
+        const name = cb.name || '';
+        let serviceCheckboxName = null;
+        if (name === 'medications[]') serviceCheckboxName = 'has_meds';
+        else if (name === 'gamot_meds[]') serviceCheckboxName = 'has_gamot_meds';
+        else if (name === 'labs[]') serviceCheckboxName = 'has_labs';
+        if (serviceCheckboxName) {
+            const form = cardElement.closest('form');
+            const serviceCb = form && form.querySelector('input[name="' + serviceCheckboxName + '"]');
+            if (serviceCb && !serviceCb.checked) {
+                serviceCb.checked = true;
+                serviceCb.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        }
+    }
+
+    const serviceContainer = cardElement.closest('[data-service-container]');
+    if (serviceContainer) updateServiceTabCounts(serviceContainer.dataset.serviceContainer);
 }
 
 function syncCardStates(containerId) {
@@ -2117,6 +2404,7 @@ function syncConsultationRequirements(form) {
 }
 
 function validatePatientRecordForm(form) {
+    if (!form || form.dataset.submitting === '1') return false;
     syncConsultationRequirements(form);
 
     const medsType = form.querySelector('select[name="meds_type_id"]');
@@ -2131,6 +2419,13 @@ function validatePatientRecordForm(form) {
         }
         alert('A physician is required for a Consultation. Please select a physician before saving.');
         return false;
+    }
+
+    form.dataset.submitting = '1';
+    const submitButton = form.querySelector('button[type="submit"]');
+    if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = 'Saving…';
     }
 
     return true;
@@ -2202,9 +2497,7 @@ function openEditModal(record) {
     cbGamot.checked = parseInt(record.has_gamot_meds) === 1;
     cbLabs.checked = parseInt(record.has_labs) === 1;
 
-    toggleBox(cbMeds, 'edit-meds-box');
-    toggleBox(cbGamot, 'edit-gamot-box');
-    toggleBox(cbLabs, 'edit-labs-box');
+    syncServiceTabs('edit');
 
     let savedMeds = [], savedGamot = [], savedLabs = [];
     try { savedMeds = JSON.parse(record.record_medications) || []; } catch(e) {}
@@ -2228,8 +2521,12 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+let patientHistoryController = null;
+let patientHistoryLastTrigger = null;
+
 function openPatientHistory(patientName) {
     const modal = document.getElementById('patient-history-modal');
+    patientHistoryLastTrigger = document.activeElement;
     const title = document.getElementById('ph-title');
     const subtitle = document.getElementById('ph-subtitle');
     const body = document.getElementById('patient-history-body');
@@ -2246,7 +2543,14 @@ function openPatientHistory(patientName) {
 
     body.innerHTML = '<div class="ph-loading"><div class="ph-spinner"></div><p>Loading history…</p></div>';
 
-    fetch('patient_history.php?embed=1&patient_name=' + encodeURIComponent(patientName))
+    if (patientHistoryController) patientHistoryController.abort();
+    patientHistoryController = new AbortController();
+
+    fetch('patient_history.php?embed=1&patient_name=' + encodeURIComponent(patientName), {
+        credentials: 'same-origin',
+        headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'text/html' },
+        signal: patientHistoryController.signal
+    })
         .then(response => {
             if (!response.ok) throw new Error('Network error');
             return response.text();
@@ -2299,6 +2603,9 @@ function closePatientHistory() {
     setTimeout(() => {
         modal.hidden = true;
         modal.style.display = 'none';
+        if (patientHistoryLastTrigger && typeof patientHistoryLastTrigger.focus === 'function') {
+            patientHistoryLastTrigger.focus();
+        }
     }, 200);
 }
 
@@ -2362,31 +2669,151 @@ function togglePCU(button) {
         delete button.dataset.loading;
     });
 
-    return false;
+    return false;                 
 }
 </script>
 
+
+
 <script>
-document.addEventListener('DOMContentLoaded', function () {
-    const toggle = document.getElementById('toggle-add-patient');
-    const wrap = document.getElementById('add-patient-form-wrap');
+function getServiceContainer(type) {
+    return document.querySelector('[data-service-container="' + type + '"]');
+}
 
-    if (toggle && wrap) {
-        toggle.addEventListener('click', function (event) {
-            event.preventDefault();
-            event.stopPropagation();
+function updateServiceTabCounts(type) {
+    const container = getServiceContainer(type);
+    if (!container) return;
+    container.querySelectorAll('.service-tab-count').forEach(function(countEl) {
+        const pane = document.getElementById(countEl.dataset.countFor);
+        if (!pane) return;
+        const checked = pane.querySelectorAll('.selector-item input[type="checkbox"]:checked').length;
+        countEl.textContent = String(checked);
+    });
+    container.querySelectorAll('.service-title-count').forEach(function(el) {
+        const pane = el.closest('.service-tab-pane');
+        if (!pane) return;
+        const checked = pane.querySelectorAll('.selector-item input[type="checkbox"]:checked').length;
+        el.textContent = checked + (checked === 1 ? ' selected' : ' selected');
+    });
+}
 
-            wrap.hidden = !wrap.hidden;
-            const open = !wrap.hidden;
-            toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-            toggle.textContent = open ? '− Hide Form' : '+ Add Patient';
+function setServiceTab(type, service) {
+    const container = getServiceContainer(type);
+    if (!container) return;
+    syncServiceTabs(type, service);
+}
 
-            if (open) {
-                const input = document.getElementById('add_patient_input');
-                if (input) setTimeout(() => input.focus(), 50);
+function syncServiceTabs(type, preferredService) {
+    const container = getServiceContainer(type);
+    if (!container) return;
+
+    const serviceMap = {
+        meds: 'has_meds',
+        gamot: 'has_gamot_meds',
+        labs: 'has_labs'
+    };
+
+    container.classList.add('is-visible');
+    container.querySelectorAll('.service-tab-pane').forEach(function(pane) {
+        const service = pane.dataset.servicePane;
+        const checkboxName = serviceMap[service];
+        const checkbox = container.closest('form') && container.closest('form').querySelector('input[name="' + checkboxName + '"]');
+        const shouldShow = !!(checkbox && checkbox.checked);
+        pane.classList.toggle('active', shouldShow);
+        pane.style.display = shouldShow ? 'block' : 'none';
+    });
+
+    updateServiceTabCounts(type);
+}
+
+function toggleServiceTabCheckbox(checkbox, type, service) {
+    const container = getServiceContainer(type);
+    if (!container) return;
+
+    const pane = container.querySelector('[data-service-pane="' + service + '"]');
+    if (pane) {
+        pane.classList.toggle('active', checkbox.checked);
+        pane.style.display = checkbox.checked ? 'block' : 'none';
+
+        // Keep the selector compact: when a service is turned on,
+        // place focus in its search field only when it is empty.
+        if (checkbox.checked) {
+            const search = pane.querySelector('.selector-search-input');
+            if (search && !search.value) {
+                // Do not steal focus from the checkbox the user just clicked.
             }
+        }
+    }
+
+    updateServiceTabCounts(type);
+}
+
+function filterServiceOptions(input) {
+    if (!input) return;
+    const box = input.closest('.service-selector');
+    if (!box) return;
+    const query = (input.value || '').trim().toLowerCase();
+    const items = Array.from(box.querySelectorAll('.selector-item'));
+    const categories = Array.from(box.querySelectorAll('.selector-category'));
+    let visibleCount = 0;
+
+    categories.forEach(function(category, index) {
+        if (category.dataset.originalOrder === undefined) category.dataset.originalOrder = String(index);
+        const categoryItems = Array.from(category.querySelectorAll('.selector-item'));
+        let categoryVisible = 0;
+        categoryItems.forEach(function(item, itemIndex) {
+            if (item.dataset.originalOrder === undefined) item.dataset.originalOrder = String(itemIndex);
+            const text = (item.dataset.searchText || item.textContent || '').toLowerCase();
+            const matches = !query || text.indexOf(query) !== -1;
+            item.classList.toggle('selector-item-hidden', !matches);
+            if (matches) { categoryVisible++; visibleCount++; }
+        });
+        category.classList.toggle('is-empty', categoryVisible === 0);
+        category.dataset.matchCount = String(categoryVisible);
+    });
+
+    // Put matching categories first while keeping their original order.
+    if (query && categories.length) {
+        const parent = categories[0].parentNode;
+        const matching = categories.filter(c => parseInt(c.dataset.matchCount || '0',10) > 0)
+            .sort((a,b) => parseInt(a.dataset.originalOrder||'0',10) - parseInt(b.dataset.originalOrder||'0',10));
+        matching.slice().reverse().forEach(function(category) { parent.insertBefore(category, categories[0]); });
+
+        // Within a matching category, put matching items first too.
+        matching.forEach(function(category) {
+            const grid = category.querySelector('.items-grid');
+            const catItems = Array.from(category.querySelectorAll('.selector-item'))
+                .filter(i => !i.classList.contains('selector-item-hidden'))
+                .sort((a,b) => parseInt(a.dataset.originalOrder||'0',10) - parseInt(b.dataset.originalOrder||'0',10));
+            if (grid && catItems.length) catItems.slice().reverse().forEach(function(item) { grid.insertBefore(item, grid.querySelector('.selector-item')); });
+        });
+    } else if (!query && categories.length) {
+        const parent = categories[0].parentNode;
+        categories.slice().sort((a,b) => parseInt(a.dataset.originalOrder||'0',10) - parseInt(b.dataset.originalOrder||'0',10))
+            .forEach(function(category) { parent.appendChild(category); });
+        categories.forEach(function(category) {
+            const grid = category.querySelector('.items-grid');
+            if (!grid) return;
+            Array.from(category.querySelectorAll('.selector-item'))
+                .sort((a,b) => parseInt(a.dataset.originalOrder||'0',10) - parseInt(b.dataset.originalOrder||'0',10))
+                .forEach(function(item) { grid.appendChild(item); });
         });
     }
+
+    box.classList.toggle('has-no-results', visibleCount === 0);
+    const count = box.querySelector('.selector-search-count');
+    if (count) count.textContent = query ? visibleCount + ' matching option' + (visibleCount === 1 ? '' : 's') : items.length + ' option' + (items.length === 1 ? '' : 's');
+}
+
+function resetServiceSelectorSearches(container) {
+    if (!container) return;
+    container.querySelectorAll('.selector-search-input').forEach(function(input) { input.value=''; filterServiceOptions(input); });
+}
+
+// Keep the service selector compact and synchronized whenever the page initializes.
+document.addEventListener('DOMContentLoaded', function() {
+    syncServiceTabs('add');
+    syncServiceTabs('edit');
 });
 </script>
 

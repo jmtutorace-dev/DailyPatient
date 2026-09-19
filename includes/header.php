@@ -167,7 +167,7 @@ if (!function_exists('get_flash')) {
                 <span class="nav-icon">👤</span>
                 Patient History
             </a>
-
+<!---
             <a href="physicians.php" class="<?= nav_active('physicians.php') ?>">
                 <span class="nav-icon">
                     <svg viewBox="0 0 24 24">
@@ -177,7 +177,8 @@ if (!function_exists('get_flash')) {
                     </svg>
                 </span>
                 Physicians &amp; Rates
-            </a>
+            </a> --->
+            
  <a href="settings.php" class="<?= nav_active('settings.php') ?>">
                 ⚙ Settings
             </a>
